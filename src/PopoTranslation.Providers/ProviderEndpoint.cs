@@ -15,6 +15,7 @@ internal static class ProviderEndpoint
             ApiProtocol.BaiduTranslate => "https://fanyi-api.baidu.com",
             ApiProtocol.YoudaoTranslate => "https://openapi.youdao.com",
             ApiProtocol.DeepLTranslate => "https://api-free.deepl.com",
+            ApiProtocol.QwenMt => "https://dashscope.aliyuncs.com/compatible-mode/v1",
             _ => throw new ArgumentException("Unsupported protocol.", nameof(protocol))
         };
         if (string.IsNullOrWhiteSpace(baseUrl)) baseUrl = defaultUrl;

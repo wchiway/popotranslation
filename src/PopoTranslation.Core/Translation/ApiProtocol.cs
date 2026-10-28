@@ -9,5 +9,6 @@ public enum ApiProtocol
     AlibabaTranslate,
     BaiduTranslate,
     YoudaoTranslate,
-    DeepLTranslate
+    DeepLTranslate,
+    QwenMt
 }

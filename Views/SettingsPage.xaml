@@ -123,15 +123,31 @@
                             <ComboBoxItem Content="OpenAI Responses" Tag="OpenAiResponses" />
                             <ComboBoxItem Content="Anthropic Messages" Tag="AnthropicMessages" />
                             <ComboBoxItem Content="Gemini generateContent" Tag="GeminiGenerateContent" />
+                            <ComboBoxItem Content="百炼 Qwen-MT" Tag="QwenMt" />
                             <ComboBoxItem Content="阿里云机器翻译" Tag="AlibabaTranslate" />
                             <ComboBoxItem Content="百度翻译" Tag="BaiduTranslate" />
                             <ComboBoxItem Content="有道翻译" Tag="YoudaoTranslate" />
                             <ComboBoxItem Content="DeepL" Tag="DeepLTranslate" />
                         </ComboBox>
                         <TextBox x:Name="BaseUrlBox" Header="Base URL" PlaceholderText="留空使用官方默认地址"
-                                 InputScope="Url" AutomationProperties.Name="服务基础地址" />
+                                 InputScope="Url" AutomationProperties.Name="服务基础地址" TextChanged="BaseUrl_TextChanged" />
+                        <ComboBox x:Name="QwenRegionBox" Header="百炼地域" HorizontalAlignment="Stretch" Visibility="Collapsed"
+                                  AutomationProperties.Name="百炼地域" SelectionChanged="QwenRegion_SelectionChanged">
+                            <ComboBoxItem Content="华北2（北京）" Tag="https://dashscope.aliyuncs.com/compatible-mode/v1" />
+                            <ComboBoxItem Content="新加坡" Tag="https://dashscope-intl.aliyuncs.com/compatible-mode/v1" />
+                            <ComboBoxItem Content="自定义 Base URL" Tag="custom" />
+                        </ComboBox>
+                        <TextBlock x:Name="QwenRegionHint" Visibility="Collapsed" Text="API Key 与地域须一致；也可使用业务空间专属 Base URL。" TextWrapping="Wrap"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         <TextBox x:Name="ModelBox" Header="模型 ID" PlaceholderText="输入服务支持的模型 ID"
                                  AutomationProperties.Name="模型 ID" />
+                        <!-- 模型选型：https://docs.bailian.console.aliyun.com/zh/model-studio/machine-translation，查证于 2026-10-28。 -->
+                        <ComboBox x:Name="QwenModelBox" Header="模型" HorizontalAlignment="Stretch" Visibility="Collapsed"
+                                  AutomationProperties.Name="Qwen-MT 模型">
+                            <ComboBoxItem Content="qwen-mt-flash（通用推荐）" Tag="qwen-mt-flash" />
+                            <ComboBoxItem Content="qwen-mt-plus（最高质量）" Tag="qwen-mt-plus" />
+                            <ComboBoxItem Content="qwen-mt-lite（低延迟）" Tag="qwen-mt-lite" />
+                        </ComboBox>
                         <PasswordBox x:Name="ApiKeyBox" Header="API Key" PlaceholderText="输入密钥"
                                      PasswordRevealMode="Hidden" AutomationProperties.Name="API Key" />
                         <TextBlock x:Name="ApiKeyHint" Text="密钥会在保存时交由应用安全存储。" TextWrapping="Wrap"

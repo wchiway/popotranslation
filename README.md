@@ -10,7 +10,7 @@ PopoTranslation 是一个使用 C#、.NET 10 和 WinUI 3 构建的 Windows 桌�
 - 多行/富文本回填：标准可写 ValuePattern 直接设置；其他社交软件通过剪贴板粘贴；终端只读取选中的文本，不自动改写。
 - 多个翻译服务配置的新增、切换和删除；密钥使用当前 Windows 用户的 DPAPI 保护。
 - 四种 AI 协议：OpenAI Chat Completions、OpenAI Responses、Anthropic Messages、Google Gemini 原生 generateContent。
-- 四种机器翻译服务：阿里云、百度翻译、有道智云、DeepL；账号凭据分别使用 DPAPI 保护。
+- 机器翻译服务：阿里云、百度翻译、有道智云、DeepL，以及百炼 Qwen-MT 专用翻译接口；账号凭据分别使用 DPAPI 保护。
 - 手动连接测试；连接测试不会在保存设置时自动执行。
 - 过期任务、取消、超时、拒绝、截断和思考块过滤。
 - 单实例运行：再次启动会唤醒已有实例。
@@ -35,6 +35,8 @@ PopoTranslation 是一个使用 C#、.NET 10 和 WinUI 3 构建的 Windows 桌�
 在 Visual Studio 2026 中打开 `popotranslation.slnx`，选择 `x64`，启动 `popotranslation`。打开托盘菜单中的设置，至少填写一个服务配置、模型、API Key 和目标语言并保存。主触发方式是连续三次空格；备用快捷键默认为 `Ctrl+Alt+F9`（选区）和 `Ctrl+Alt+F10`（整个输入框），可在设置中修改。备用组合被占用时保存仍会成功，三次空格仍可使用。
 
 机器翻译设置中选择对应服务，填写阿里云 AccessKey ID/Secret、百度 APP ID/密钥、有道应用 ID/密钥或 DeepL API Key。DeepL 默认使用免费版地址，付费版需填写官方 API 地址。机器翻译不使用 AI 风格设置；当前只映射部分常用语言，阿里云暂不支持繁体中文。服务商可能限制请求长度或改变换行；不完整的多行结果不会自动回填。真实服务的可用性与费用以各厂商为准。
+
+百炼 Qwen-MT 请选择“百炼 Qwen-MT”，填写对应地域的百炼 API Key，并选择 `qwen-mt-flash`、`qwen-mt-plus` 或 `qwen-mt-lite`。默认使用北京地域，也可选择新加坡或填写业务空间的兼容模式地址；API Key 必须与地域匹配。更多参数及语种限制见 [官方文档](https://docs.bailian.console.aliyun.com/zh/model-studio/machine-translation)。
 
 ## 诊断日志
 

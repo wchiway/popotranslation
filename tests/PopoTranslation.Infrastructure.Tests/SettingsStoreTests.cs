@@ -88,6 +88,24 @@ public class SettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task QwenMtProfileRoundTripsWithOneCredentialAndRequiresModel()
+    {
+        var store = new JsonSettingsStore(PathName);
+        var qwen = Settings with
+        {
+            Providers = [new("id", "Qwen-MT", ApiProtocol.QwenMt, "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "qwen-mt-flash", "key-ref", 30)]
+        };
+        await store.SaveAsync(qwen, TestContext.Current.CancellationToken);
+        var loaded = await store.LoadAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(qwen.Providers[0], loaded!.Providers[0]);
+        Assert.Null(loaded.Providers[0].SecondaryCredentialReference);
+        await Assert.ThrowsAsync<InvalidDataException>(() => store.SaveAsync(qwen with
+        {
+            Providers = [qwen.Providers[0] with { ModelId = "" }]
+        }, TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
     public async Task OldProfileWithoutSecondaryReferenceRemainsReadable()
     {
         Directory.CreateDirectory(_directory);

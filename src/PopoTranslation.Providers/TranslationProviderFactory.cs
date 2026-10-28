@@ -46,6 +46,7 @@ public static class TranslationProviderFactory
             ApiProtocol.BaiduTranslate => new BaiduTranslationProvider(profile, apiKey, secondaryCredential!, new Uri(endpoint, "api/trans/vip/translate"), httpClient),
             ApiProtocol.YoudaoTranslate => new YoudaoTranslationProvider(profile, apiKey, secondaryCredential!, new Uri(endpoint, "api"), httpClient),
             ApiProtocol.DeepLTranslate => new DeepLTranslationProvider(profile, apiKey, null, endpoint, httpClient),
+            ApiProtocol.QwenMt => new QwenMtTranslationProvider(profile, apiKey, endpoint, httpClient),
             _ => throw new ArgumentException("Unsupported protocol.", nameof(profile))
         };
     }

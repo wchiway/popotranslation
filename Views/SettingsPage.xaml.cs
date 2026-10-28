@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Windows.ApplicationModel.DataTransfer;
+using PopoTranslation.Core;
 
 namespace popotranslation.Views;
 
@@ -38,6 +39,7 @@ public sealed partial class SettingsPage : Page
     private bool _hasSavedApiKey;
     private bool _hasSavedSecondaryCredential;
     private string? _loadedProtocol;
+    private string? _loadedBaseUrl;
     private readonly Dictionary<string, string> _protocolEndpoints = new(StringComparer.Ordinal);
     private bool _loadingSettings;
     private bool _busy;
@@ -46,6 +48,7 @@ public sealed partial class SettingsPage : Page
     private string? _selectedProfileId;
     private Draft? _baseline;
     private ComboBoxItem? _savedTargetLanguageItem;
+    private ComboBoxItem? _savedQwenModelItem;
 
     private sealed record Draft(string Name, string Protocol, string BaseUrl, string ModelId, string Timeout,
         string SourceLanguage, string TargetLanguage, string Style, string SelectionHotkey, string WholeControlHotkey);
@@ -71,6 +74,7 @@ public sealed partial class SettingsPage : Page
         _selectedProfileId = _profileId;
         _loadingSettings = true;
         _loadedProtocol = settings.Protocol;
+        _loadedBaseUrl = settings.BaseUrl;
         _protocolEndpoints.Clear();
         _protocolEndpoints[settings.Protocol] = settings.BaseUrl;
         _hasSavedApiKey = settings.HasSavedApiKey;
@@ -87,6 +91,8 @@ public sealed partial class SettingsPage : Page
         }
         BaseUrlBox.Text = settings.BaseUrl;
         ModelBox.Text = settings.ModelId;
+        SelectQwenModel(settings.Protocol == "QwenMt" ? settings.ModelId : string.Empty);
+        SelectQwenRegion(settings.BaseUrl);
         ApiKeyBox.Password = string.Empty;
         SecondaryKeyBox.Password = string.Empty;
         UpdateKeyHint();
@@ -143,9 +149,14 @@ public sealed partial class SettingsPage : Page
     }
 
     private string SelectedProtocol => (ProtocolBox.SelectedItem as ComboBoxItem)?.Tag as string ?? string.Empty;
-    private static bool IsMachine(string protocol) => protocol is "AlibabaTranslate" or "BaiduTranslate" or "YoudaoTranslate" or "DeepLTranslate";
+    private static bool IsMachine(string protocol) => protocol is "AlibabaTranslate" or "BaiduTranslate" or "YoudaoTranslate" or "DeepLTranslate" or "QwenMt";
+    private static bool NeedsModel(string protocol) => !IsMachine(protocol) || protocol == "QwenMt";
+    private string SelectedModel => SelectedProtocol == "QwenMt"
+        ? (QwenModelBox.SelectedItem as ComboBoxItem)?.Tag as string ?? string.Empty
+        : ModelBox.Text;
     private static bool NeedsSecondary(string protocol) => protocol is "AlibabaTranslate" or "BaiduTranslate" or "YoudaoTranslate";
-    private bool CanUseSavedCredential => SelectedProtocol == _loadedProtocol;
+    private bool CanUseSavedCredential => SelectedProtocol == _loadedProtocol &&
+        (SelectedProtocol != "QwenMt" || ProviderCredentialPolicy.CanReuse(ApiProtocol.QwenMt, _loadedBaseUrl, BaseUrlBox.Text));
     private string SelectedSourceLanguage => IsMachine(SelectedProtocol)
         ? (MachineSourceLanguageBox.SelectedItem as ComboBoxItem)?.Tag as string ?? string.Empty
         : SourceLanguageBox.Text;
@@ -163,6 +174,45 @@ public sealed partial class SettingsPage : Page
         MachineSourceLanguageBox.SelectedItem = item;
     }
 
+    private void SelectQwenModel(string model)
+    {
+        if (_savedQwenModelItem is not null)
+        {
+            QwenModelBox.Items.Remove(_savedQwenModelItem);
+            _savedQwenModelItem = null;
+        }
+        var item = QwenModelBox.Items.OfType<ComboBoxItem>()
+            .FirstOrDefault(x => string.Equals(x.Tag as string, model, StringComparison.Ordinal));
+        if (item is null && !string.IsNullOrWhiteSpace(model))
+        {
+            item = _savedQwenModelItem = new ComboBoxItem { Content = $"{model}（已保存）", Tag = model };
+            QwenModelBox.Items.Add(item);
+        }
+        QwenModelBox.SelectedItem = item ?? QwenModelBox.Items[0];
+    }
+
+    private void SelectQwenRegion(string baseUrl)
+    {
+        var item = QwenRegionBox.Items.OfType<ComboBoxItem>()
+            .FirstOrDefault(x => string.Equals(x.Tag as string, baseUrl, StringComparison.OrdinalIgnoreCase));
+        QwenRegionBox.SelectedItem = item ?? QwenRegionBox.Items[2];
+    }
+
+    private void BaseUrl_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_loadingSettings || SelectedProtocol != "QwenMt" || QwenRegionBox is null) return;
+        if (ApiKeyBox is not null) ApiKeyBox.Password = string.Empty;
+        SelectQwenRegion(BaseUrlBox.Text);
+        UpdateKeyHint();
+    }
+
+    private void QwenRegion_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingSettings || SelectedProtocol != "QwenMt" || BaseUrlBox is null) return;
+        var url = (QwenRegionBox.SelectedItem as ComboBoxItem)?.Tag as string;
+        if (url is not null && url != "custom") BaseUrlBox.Text = url;
+    }
+
     private void Protocol_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_loadingSettings || ApiKeyBox is null || SecondaryKeyBox is null || MachineSourceLanguageBox is null || BaseUrlBox is null) return;
@@ -172,6 +222,13 @@ public sealed partial class SettingsPage : Page
         ApiKeyBox.Password = string.Empty;
         SecondaryKeyBox.Password = string.Empty;
         BaseUrlBox.Text = _protocolEndpoints.GetValueOrDefault(SelectedProtocol, string.Empty);
+        if (SelectedProtocol == "QwenMt")
+        {
+            if (QwenModelBox.SelectedItem is null) SelectQwenModel(string.Empty);
+            if (string.IsNullOrWhiteSpace(BaseUrlBox.Text))
+                BaseUrlBox.Text = (QwenRegionBox.Items[0] as ComboBoxItem)?.Tag as string ?? string.Empty;
+            SelectQwenRegion(BaseUrlBox.Text);
+        }
         if (IsMachine(SelectedProtocol) && !IsMachine(previousProtocol)) SelectMachineSourceLanguage(SourceLanguageBox.Text);
         else if (!IsMachine(SelectedProtocol) && IsMachine(previousProtocol))
             SourceLanguageBox.Text = (MachineSourceLanguageBox.SelectedItem as ComboBoxItem)?.Tag as string ?? SourceLanguageBox.Text;
@@ -183,7 +240,11 @@ public sealed partial class SettingsPage : Page
         var protocol = SelectedProtocol;
         var machine = IsMachine(protocol);
         var secondary = NeedsSecondary(protocol);
+        var qwen = protocol == "QwenMt";
         ModelBox.Visibility = machine ? Visibility.Collapsed : Visibility.Visible;
+        QwenModelBox.Visibility = qwen ? Visibility.Visible : Visibility.Collapsed;
+        QwenRegionBox.Visibility = qwen ? Visibility.Visible : Visibility.Collapsed;
+        QwenRegionHint.Visibility = qwen ? Visibility.Visible : Visibility.Collapsed;
         StyleBox.Visibility = machine ? Visibility.Collapsed : Visibility.Visible;
         MachineStyleHint.Visibility = machine ? Visibility.Visible : Visibility.Collapsed;
         MachineStyleHint.Text = protocol == "AlibabaTranslate"
@@ -209,7 +270,7 @@ public sealed partial class SettingsPage : Page
 
     private Draft CaptureForm() => new(
         NameBox.Text, (ProtocolBox.SelectedItem as ComboBoxItem)?.Tag as string ?? string.Empty,
-        BaseUrlBox.Text, ModelBox.Text, TimeoutBox.Text, SelectedSourceLanguage,
+        BaseUrlBox.Text, SelectedModel, TimeoutBox.Text, SelectedSourceLanguage,
         SelectedTargetLanguage, StyleBox.Text, SelectionHotkeyBox.Text, WholeHotkeyBox.Text);
 
     private bool HasUnsavedChanges()
@@ -271,6 +332,7 @@ public sealed partial class SettingsPage : Page
             if (saving && result.Success)
             {
                 _loadedProtocol = form!.Protocol;
+                _loadedBaseUrl = form.BaseUrl;
                 _hasSavedApiKey = true;
                 _hasSavedSecondaryCredential = NeedsSecondary(form.Protocol);
                 ApiKeyBox.Password = string.Empty;
@@ -308,6 +370,8 @@ public sealed partial class SettingsPage : Page
         ProtocolBox.IsEnabled = !busy;
         BaseUrlBox.IsEnabled = !busy;
         ModelBox.IsEnabled = !busy;
+        QwenModelBox.IsEnabled = !busy;
+        QwenRegionBox.IsEnabled = !busy;
         ApiKeyBox.IsEnabled = !busy;
         TimeoutBox.IsEnabled = !busy;
         SaveButton.IsEnabled = !busy;
@@ -403,7 +467,7 @@ public sealed partial class SettingsPage : Page
         error = string.Empty;
         var name = NameBox.Text.Trim();
         var baseUrl = BaseUrlBox.Text.Trim();
-        var model = ModelBox.Text.Trim();
+        var model = SelectedModel.Trim();
         var target = SelectedTargetLanguage;
         if (SelectedProtocol == "AlibabaTranslate" && (target == "繁體中文" || SelectedSourceLanguage == "繁體中文"))
         {
@@ -411,7 +475,7 @@ public sealed partial class SettingsPage : Page
             return false;
         }
         if (name.Length == 0 || target.Length == 0 || ProtocolBox.SelectedItem is not ComboBoxItem selected || selected.Tag is not string protocol ||
-            (!IsMachine(protocol) && model.Length == 0))
+            (NeedsModel(protocol) && model.Length == 0))
         {
             error = "请填写服务名称、目标语言，选择服务类型；AI 服务还需填写模型。";
             return false;
@@ -449,7 +513,7 @@ public sealed partial class SettingsPage : Page
             error = "请输入应用密钥。";
             return false;
         }
-        form = new SettingsForm(_profileId, name, protocol, baseUrl, IsMachine(protocol) ? "" : model, ApiKeyBox.Password,
+        form = new SettingsForm(_profileId, name, protocol, baseUrl, NeedsModel(protocol) ? model : "", ApiKeyBox.Password,
             CanUseSavedCredential && _hasSavedApiKey, timeout, Optional(SelectedSourceLanguage), target,
             Optional(StyleBox.Text), selection, whole,
             NeedsSecondary(protocol) ? SecondaryKeyBox.Password : "", CanUseSavedCredential && _hasSavedSecondaryCredential);
@@ -479,7 +543,10 @@ public sealed partial class SettingsPage : Page
 
     private void UpdateKeyHint()
     {
-        ApiKeyHint.Text = CanUseSavedCredential && _hasSavedApiKey ? "已保存凭据；留空可继续使用，输入新值可替换。" : "凭据会在保存时交由应用安全存储。";
+        ApiKeyHint.Text = CanUseSavedCredential && _hasSavedApiKey ? "已保存凭据；留空可继续使用，输入新值可替换。"
+            : SelectedProtocol == "QwenMt" && _loadedProtocol == "QwenMt" && _hasSavedApiKey
+                ? "服务地址已更改，请输入对应地域的 API Key。"
+                : "凭据会在保存时交由应用安全存储。";
         SecondaryKeyHint.Text = CanUseSavedCredential && _hasSavedSecondaryCredential ? "已保存密钥；留空可继续使用，输入新值可替换。" : "密钥会在保存时交由应用安全存储。";
     }
 

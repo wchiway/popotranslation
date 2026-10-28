@@ -279,8 +279,9 @@ internal sealed class ApplicationController : IDisposable
             var sameProtocol = previous?.Protocol == profile!.Protocol;
             var key = form.ApiKey;
             var secondary = form.SecondaryCredential;
-            if (string.IsNullOrWhiteSpace(key) && sameProtocol)
-                key = await _secrets.ReadAsync(previous!.CredentialReference) ?? "";
+            if (string.IsNullOrWhiteSpace(key) && sameProtocol &&
+                ProviderCredentialPolicy.CanReuse(profile.Protocol, previous!.BaseUrl, profile.BaseUrl))
+                key = await _secrets.ReadAsync(previous.CredentialReference) ?? "";
             if (RequiresSecondary(profile.Protocol) && string.IsNullOrWhiteSpace(secondary) && sameProtocol && previous!.SecondaryCredentialReference is not null)
                 secondary = await _secrets.ReadAsync(previous.SecondaryCredentialReference) ?? "";
             if (string.IsNullOrWhiteSpace(key) || (RequiresSecondary(profile.Protocol) && string.IsNullOrWhiteSpace(secondary)))
@@ -358,7 +359,8 @@ internal sealed class ApplicationController : IDisposable
             var key = form.ApiKey;
             var secondary = form.SecondaryCredential;
             var previous = _settings?.Providers.FirstOrDefault(p => p.Id == form.ProfileId && p.Protocol == profile!.Protocol);
-            if (string.IsNullOrWhiteSpace(key) && previous is not null)
+            if (string.IsNullOrWhiteSpace(key) && previous is not null &&
+                ProviderCredentialPolicy.CanReuse(profile!.Protocol, previous.BaseUrl, profile.BaseUrl))
                 key = await _secrets.ReadAsync(previous.CredentialReference) ?? "";
             if (RequiresSecondary(profile!.Protocol) && string.IsNullOrWhiteSpace(secondary) && previous?.SecondaryCredentialReference is not null)
                 secondary = await _secrets.ReadAsync(previous.SecondaryCredentialReference) ?? "";
@@ -457,7 +459,8 @@ internal sealed class ApplicationController : IDisposable
                 Notify("输入框为空，没有可翻译的内容。", true);
                 return;
             }
-            var request = new TranslationRequest(TranslationLineBreaks.ToWindows(sourceText), settings.TargetLanguage, settings.SourceLanguage, settings.Style);
+            var request = new TranslationRequest(TranslationLineBreaks.ToWindows(sourceText), settings.TargetLanguage, settings.SourceLanguage,
+                IsMachine(profile.Protocol) ? null : settings.Style);
             var translationStarted = Environment.TickCount64;
             var operation = await Task.Run(() =>
             {
@@ -582,7 +585,7 @@ internal sealed class ApplicationController : IDisposable
     };
 
     private static bool IsMachine(ApiProtocol protocol) => protocol is
-        ApiProtocol.AlibabaTranslate or ApiProtocol.BaiduTranslate or ApiProtocol.YoudaoTranslate or ApiProtocol.DeepLTranslate;
+        ApiProtocol.AlibabaTranslate or ApiProtocol.BaiduTranslate or ApiProtocol.YoudaoTranslate or ApiProtocol.DeepLTranslate or ApiProtocol.QwenMt;
 
     private static bool RequiresSecondary(ApiProtocol protocol) => protocol is
         ApiProtocol.AlibabaTranslate or ApiProtocol.BaiduTranslate or ApiProtocol.YoudaoTranslate;
@@ -602,6 +605,9 @@ internal sealed class ApplicationController : IDisposable
             ApiProtocol.BaiduTranslate => "https://fanyi-api.baidu.com",
             ApiProtocol.YoudaoTranslate => "https://openapi.youdao.com",
             ApiProtocol.DeepLTranslate => "https://api-free.deepl.com",
+            // Alibaba Cloud Model Studio Base URL, verified 2026-10-28:
+            // https://docs.bailian.console.aliyun.com/zh/model-studio/base-url
+            ApiProtocol.QwenMt => ProviderCredentialPolicy.QwenDefaultBaseUrl,
             _ => ""
         } : form.BaseUrl;
         profile = new ProviderProfile(form.ProfileId, form.Name, protocol, baseUrl, form.ModelId, "pending", form.TimeoutSeconds);
