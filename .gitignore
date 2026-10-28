@@ -1,0 +1,42 @@
+# .NET / Visual Studio build outputs
+**/[Bb]in/
+**/[Oo]bj/
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Publish and test outputs
+artifacts/
+publish/
+TestResults/
+coverage/
+*.trx
+*.binlog
+
+# Local credentials and private settings
+.env
+.env.*
+!.env.example
+appsettings.Local.json
+appsettings.*.Local.json
+*.secrets.json
+*.pfx
+*.p12
+
+# Runtime data
+logs/
+*.log
+*.dmp
+
+# Local editor and operating-system files
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Local AI assistant settings
+.claude/settings.local.json
+
+# AGENTS.md and local plans are excluded in .git/info/exclude.
