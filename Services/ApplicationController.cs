@@ -414,7 +414,7 @@ internal sealed class ApplicationController : IDisposable
                 Notify("输入框为空，没有可翻译的内容。", true);
                 return;
             }
-            var request = new TranslationRequest(sourceText, settings.TargetLanguage, settings.SourceLanguage, settings.Style);
+            var request = new TranslationRequest(TranslationLineBreaks.ToWindows(sourceText), settings.TargetLanguage, settings.SourceLanguage, settings.Style);
             var translationStarted = Environment.TickCount64;
             var operation = await Task.Run(() =>
             {
@@ -429,9 +429,10 @@ internal sealed class ApplicationController : IDisposable
             DiagnosticLog.Write($"event=translation-complete generation={generation} status={result.Status} elapsedMs={Environment.TickCount64 - translationStarted}");
             if (!IsCurrent(generation, token)) return;
             if (!result.IsSuccessful || result.Text is null) { Notify(ResultMessage(result), true); return; }
+            var translatedText = TranslationLineBreaks.ToWindows(result.Text);
             var replacementStarted = Environment.TickCount64;
             Task<ReplacementResult>? replacementTask = null;
-            replacementTask = _editor.ReplaceAsync(capture.Snapshot, result.Text, action =>
+            replacementTask = _editor.ReplaceAsync(capture.Snapshot, translatedText, action =>
             {
                 if (!IsCurrent(generation, token)) return new ReplacementResult(ReplacementStatus.ManualApply);
                 return _coordinator.TryExecuteIfCurrent(operation, () =>
@@ -449,7 +450,7 @@ internal sealed class ApplicationController : IDisposable
                 Notify("译文已回填。");
             else
             {
-                _page.SetResult(result.Text);
+                _page.SetResult(translatedText);
                 Notify(replacement.Status switch
                 {
                     ReplacementStatus.SubmittedUnconfirmed => "已提交回填但无法确认，请检查目标输入框；译文可在设置中复制。",
