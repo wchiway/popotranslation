@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Windows.Automation;
 using System.Windows.Automation.Text;
 using PopoTranslation.Windows.Clipboard;
+using PopoTranslation.Windows.Diagnostics;
 using PopoTranslation.Windows.Editing;
 
 namespace PopoTranslation.Windows.Automation;
@@ -20,6 +21,7 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
     {
         if (expectedForegroundHwnd == 0) return new(CaptureStatus.NoFocusedEditor);
         var targetKind = TargetApplication.ClassifyWindow(expectedForegroundHwnd);
+        DiagnosticLog.Write($"event=capture-start mode={mode} target={targetKind} hwnd={expectedForegroundHwnd} process={TargetApplication.GetProcessName(expectedForegroundHwnd) ?? "unknown"}");
         if (targetKind == TargetKind.Terminal && mode == CaptureMode.WholeControl)
             return new(CaptureStatus.Unsupported);
         var allowUnknownPassword = targetKind is TargetKind.Social or TargetKind.TextEditor;
@@ -30,8 +32,13 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
                 () => CaptureStable(mode, expectedForegroundHwnd, allowUnknownPassword), cancellationToken);
             uia = accepted && result is not null ? result : new(CaptureStatus.Busy);
         }
-        catch (OperationCanceledException) { throw; }
-        catch { uia = new(CaptureStatus.Unavailable); }
+        catch (OperationCanceledException) { DiagnosticLog.Write("event=uia-cancelled"); throw; }
+        catch (Exception error)
+        {
+            DiagnosticLog.Write($"event=uia-exception type={error.GetType().Name} hresult={error.HResult:X8}");
+            uia = new(CaptureStatus.Unavailable);
+        }
+        DiagnosticLog.Write($"event=uia-result status={uia.Status}");
 
         if (uia.Status == CaptureStatus.Captured)
             return new(CaptureStatus.Captured, uia.Snapshot! with { TargetKind = targetKind });
@@ -128,6 +135,7 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
         var enabled = element.GetCurrentPropertyValue(AutomationElement.IsEnabledProperty, true);
         if (enabled is not bool isEnabled || !isEnabled) return new(CaptureStatus.ReadOnly);
         var controlType = element.Current.ControlType;
+        DiagnosticLog.Write($"event=uia-control type={controlType.ProgrammaticName} enabled={isEnabled}");
 
         // An unsupported property is not proof of safety for ordinary apps. For known
         // chat input surfaces and text editors, allow the clipboard fallback to handle it.

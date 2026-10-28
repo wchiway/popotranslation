@@ -11,6 +11,7 @@ using PopoTranslation.Infrastructure.Settings;
 using PopoTranslation.Providers;
 using PopoTranslation.Windows.Automation;
 using PopoTranslation.Windows.Editing;
+using PopoTranslation.Windows.Diagnostics;
 using PopoTranslation.Windows.Hotkeys;
 using PopoTranslation.Windows.Messaging;
 using PopoTranslation.Windows.Tray;
@@ -338,6 +339,7 @@ internal sealed class ApplicationController : IDisposable
     {
         var foreground = FocusedEditorReader.GetForegroundWindowAtTrigger();
         var generation = Interlocked.Increment(ref _generation);
+        DiagnosticLog.Write($"event=hotkey action={action} generation={generation} foreground={foreground}");
         // Start capturing immediately on the native callback, before the UI dispatcher runs.
         // Waiting to dispatch first allows focus to move to another window or control.
         _ = CaptureThenTranslateAsync(action, foreground, generation);
@@ -364,8 +366,13 @@ internal sealed class ApplicationController : IDisposable
                 action == HotkeyAction.Selection ? CaptureMode.Selection : CaptureMode.WholeControl,
                 foreground, captureTimeout.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) { return; }
-        catch { capture = new CaptureResult(CaptureStatus.Unavailable); }
+        catch (OperationCanceledException) { DiagnosticLog.Write($"event=capture-cancelled generation={generation}"); return; }
+        catch (Exception error)
+        {
+            DiagnosticLog.Write($"event=capture-exception generation={generation} type={error.GetType().Name} hresult={error.HResult:X8}");
+            capture = new CaptureResult(CaptureStatus.Unavailable);
+        }
+        DiagnosticLog.Write($"event=capture-finished generation={generation} status={capture.Status} method={capture.Snapshot?.Method.ToString() ?? "none"}");
 
         if (!IsCurrent(generation)) return;
         _dispatcher.TryEnqueue(() => _ = TranslateAsync(action, capture, generation));

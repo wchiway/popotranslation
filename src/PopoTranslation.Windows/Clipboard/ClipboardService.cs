@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using PopoTranslation.Windows.Input;
+using PopoTranslation.Windows.Diagnostics;
 
 namespace PopoTranslation.Windows.Clipboard;
 
@@ -33,46 +34,79 @@ public sealed class ClipboardService : IDisposable
     private static ClipboardCaptureResult CaptureCore(nint expectedForeground, bool selectAll,
         bool terminalCopy, CancellationToken cancellationToken)
     {
+        DiagnosticLog.Write($"event=clipboard-start selectAll={selectAll} terminal={terminalCopy} expected={expectedForeground} foreground={GetForegroundWindow()}");
+        FocusDiagnostics.Record("clipboard-start");
         if (expectedForeground == 0 || GetForegroundWindow() != expectedForeground)
             return new(ClipboardCaptureStatus.Unavailable, Reason: "目标窗口已失去焦点。");
         if (!TryReadClipboard(out var oldData, out var reason))
+        {
+            DiagnosticLog.Write("event=clipboard-read-failed");
             return new(ClipboardCaptureStatus.Unavailable, Reason: reason);
+        }
 
         var sentinel = SentinelPrefix + Guid.NewGuid().ToString("N");
+        string? restoreIfCurrent = null;
         try
         {
-            if (!TrySetText(sentinel)) return new(ClipboardCaptureStatus.Unavailable, Reason: "剪贴板正被其他程序占用。");
+            if (!TrySetText(sentinel))
+            {
+                DiagnosticLog.Write("event=clipboard-sentinel-failed");
+                return new(ClipboardCaptureStatus.Unavailable, Reason: "剪贴板正被其他程序占用。");
+            }
+            restoreIfCurrent = sentinel;
             var sequence = GetClipboardSequenceNumber();
-            if (!KeyboardSimulator.WaitForModifiersReleased(TimeSpan.FromSeconds(1)))
-                return new(ClipboardCaptureStatus.Unavailable, Reason: "快捷键仍被按住。");
-            if (selectAll) KeyboardSimulator.SendSelectAll();
+            var released = KeyboardSimulator.WaitForShortcutKeysReleased(TimeSpan.FromSeconds(1));
+            DiagnosticLog.Write($"event=keys-released success={released} spaceDown={KeyboardSimulator.IsSpaceDown()} modifiersDown={KeyboardSimulator.AreModifiersDown()}");
+            if (!released) return new(ClipboardCaptureStatus.Unavailable, Reason: "快捷键仍被按住。");
+            if (GetForegroundWindow() != expectedForeground)
+                return new(ClipboardCaptureStatus.Unavailable, Reason: "目标窗口已失去焦点。");
+            if (selectAll)
+            {
+                var selected = KeyboardSimulator.SendSelectAll();
+                DiagnosticLog.Write($"event=send-select-all success={selected} foreground={GetForegroundWindow()}");
+                if (!selected) return new(ClipboardCaptureStatus.Unavailable, Reason: "无法发送全选按键。");
+                Thread.Sleep(80);
+            }
+            if (GetForegroundWindow() != expectedForeground)
+                return new(ClipboardCaptureStatus.Unavailable, Reason: "目标窗口已失去焦点。");
+            FocusDiagnostics.Record("before-copy");
             var sent = terminalCopy ? KeyboardSimulator.SendTerminalCopy() : KeyboardSimulator.SendCopy();
+            DiagnosticLog.Write($"event=send-copy success={sent} foreground={GetForegroundWindow()} spaceDown={KeyboardSimulator.IsSpaceDown()} modifiersDown={KeyboardSimulator.AreModifiersDown()}");
             if (!sent) return new(ClipboardCaptureStatus.Unavailable, Reason: "无法发送复制按键。");
 
-            var deadline = Environment.TickCount64 + 1200;
+            var deadline = Environment.TickCount64 + 2000;
+            var sequenceChanged = false;
             while (Environment.TickCount64 < deadline)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (GetForegroundWindow() != expectedForeground)
                     return new(ClipboardCaptureStatus.Unavailable, Reason: "目标窗口已失去焦点。");
-                if (GetClipboardSequenceNumber() != sequence && TryGetText(out var text))
+                sequenceChanged |= GetClipboardSequenceNumber() != sequence;
+                // Delayed clipboard rendering may leave the sequence unchanged until
+                // the data is requested, so reading cannot depend on that number.
+                if (TryGetText(out var text) && !string.IsNullOrEmpty(text) && text != sentinel)
                 {
-                    if (!string.IsNullOrEmpty(text) && text != sentinel)
-                    {
-                        RestoreClipboard(oldData, text);
-                        return new(ClipboardCaptureStatus.Captured, text);
-                    }
+                    sequenceChanged |= GetClipboardSequenceNumber() != sequence;
+                    DiagnosticLog.Write($"event=clipboard-result status=captured sequenceChanged={sequenceChanged}");
+                    restoreIfCurrent = text;
+                    return new(ClipboardCaptureStatus.Captured, text);
                 }
                 Thread.Sleep(20);
             }
-            RestoreClipboard(oldData, sentinel);
-            return new(ClipboardCaptureStatus.NoSelection,
-                Reason: "没有读取到输入框文字；请确认焦点在输入框，且目标应用没有以更高权限运行。");
+            DiagnosticLog.Write($"event=clipboard-result status=no-text sequenceChanged={sequenceChanged} foreground={GetForegroundWindow()}");
+            FocusDiagnostics.Record("copy-timeout");
+            return new(ClipboardCaptureStatus.NoSelection, Reason: sequenceChanged
+                ? "输入框复制结果不是可用文本；请确认选区或输入内容，并尝试先手动选中文字。"
+                : "没有读取到输入框文字；复制快捷键可能未送达，请确认焦点在输入框，且目标应用没有以更高权限运行。");
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
-            RestoreClipboard(oldData, sentinel);
+            DiagnosticLog.Write($"event=clipboard-exception type={error.GetType().Name} hresult={error.HResult:X8}");
             return new(ClipboardCaptureStatus.Unavailable, Reason: "剪贴板读取失败。");
+        }
+        finally
+        {
+            if (restoreIfCurrent is not null) RestoreClipboard(oldData, restoreIfCurrent);
         }
     }
 
@@ -81,18 +115,22 @@ public sealed class ClipboardService : IDisposable
         if (GetForegroundWindow() != expectedForeground) return false;
         if (!TryReadClipboard(out var oldData, out _)) return false;
         if (!TrySetText(text)) return false;
-        if (!KeyboardSimulator.WaitForModifiersReleased(TimeSpan.FromSeconds(1))) return false;
-        if (selectAll)
+        try
         {
-            KeyboardSimulator.SendSelectAll();
-            Thread.Sleep(40);
+            if (!KeyboardSimulator.WaitForShortcutKeysReleased(TimeSpan.FromSeconds(1))) return false;
+            if (GetForegroundWindow() != expectedForeground) return false;
+            if (selectAll)
+            {
+                if (!KeyboardSimulator.SendSelectAll()) return false;
+                Thread.Sleep(40);
+            }
+            if (GetForegroundWindow() != expectedForeground) return false;
+            if (!KeyboardSimulator.SendPaste()) return false;
+            // Give the target a chance to consume the paste before restoring the old data.
+            Thread.Sleep(1200);
+            return true;
         }
-        var sent = KeyboardSimulator.SendPaste();
-        if (!sent) return false;
-        // Give the target a chance to consume the paste before restoring the old data.
-        Thread.Sleep(1200);
-        RestoreClipboard(oldData, text);
-        return true;
+        finally { RestoreClipboard(oldData, text); }
     }
 
     private static bool TryReadClipboard(out System.Windows.IDataObject? oldData, out string? reason)
