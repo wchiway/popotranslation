@@ -12,28 +12,41 @@ public sealed class TrayIconService : IDisposable
     private readonly NativeMessageWindow _window;
     private readonly uint _taskbarCreated;
     private NotifyIconData _icon;
+    private readonly bool _ownsIcon;
     private bool _disposed;
     private bool _paused;
     public event Action<TrayAction>? ActionRequested;
 
-    public TrayIconService(NativeMessageWindow window, nint iconHandle, string tooltip = "PopoTranslation")
+    public TrayIconService(NativeMessageWindow window, string iconPath, string tooltip = "PopoTranslation")
     {
-        if (iconHandle == 0) throw new ArgumentException("A valid icon handle is required.", nameof(iconHandle));
         _window = window;
         _taskbarCreated = RegisterWindowMessage("TaskbarCreated");
         if (_taskbarCreated == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
-        _icon = new NotifyIconData
+        // A file-loaded icon without LR_SHARED belongs to this service.
+        var iconHandle = LoadImage(0, iconPath, 1, GetSystemMetrics(49), GetSystemMetrics(50), 0x10);
+        _ownsIcon = iconHandle != 0;
+        if (!_ownsIcon) iconHandle = LoadIcon(0, (nint)32512);
+        if (iconHandle == 0) throw new Win32Exception("无法加载托盘图标。");
+        try
         {
-            Size = (uint)Marshal.SizeOf<NotifyIconData>(), Window = window.Handle, Id = 1,
-            Flags = 0x1 | 0x2 | 0x4, CallbackMessage = CallbackMessage, Icon = iconHandle,
-            Tip = tooltip.Length <= 127 ? tooltip : tooltip[..127], Info = "", InfoTitle = ""
-        };
-        _window.Invoke(() =>
+            _icon = new NotifyIconData
+            {
+                Size = (uint)Marshal.SizeOf<NotifyIconData>(), Window = window.Handle, Id = 1,
+                Flags = 0x1 | 0x2 | 0x4, CallbackMessage = CallbackMessage, Icon = iconHandle,
+                Tip = tooltip.Length <= 127 ? tooltip : tooltip[..127], Info = "", InfoTitle = ""
+            };
+            _window.Invoke(() =>
+            {
+                if (!ShellNotifyIcon(0, ref _icon)) throw new Win32Exception("无法创建通知区域图标。");
+                _window.Message += OnMessage;
+                return 0;
+            });
+        }
+        catch
         {
-            if (!ShellNotifyIcon(0, ref _icon)) throw new Win32Exception("无法创建通知区域图标。");
-            _window.Message += OnMessage;
-            return 0;
-        });
+            if (_ownsIcon) DestroyIcon(iconHandle);
+            throw;
+        }
     }
 
     public void SetPaused(bool paused) => _window.Invoke(() => { _paused = paused; return 0; });
@@ -89,6 +102,8 @@ public sealed class TrayIconService : IDisposable
             _disposed = true;
             _window.Message -= OnMessage;
             ShellNotifyIcon(2, ref _icon);
+            if (_ownsIcon) DestroyIcon(_icon.Icon);
+            _icon.Icon = 0;
             return 0;
         });
     }
@@ -110,6 +125,10 @@ public sealed class TrayIconService : IDisposable
         public nint BalloonIcon;
     }
     [StructLayout(LayoutKind.Sequential)] private struct Point { public int X, Y; }
+    [DllImport("user32.dll", EntryPoint = "LoadImageW", CharSet = CharSet.Unicode, SetLastError = true)] private static extern nint LoadImage(nint instance, string name, uint type, int width, int height, uint flags);
+    [DllImport("user32.dll", EntryPoint = "LoadIconW")] private static extern nint LoadIcon(nint instance, nint name);
+    [DllImport("user32.dll")] private static extern bool DestroyIcon(nint icon);
+    [DllImport("user32.dll")] private static extern int GetSystemMetrics(int index);
     [DllImport("shell32.dll", EntryPoint = "Shell_NotifyIconW", CharSet = CharSet.Unicode)] private static extern bool ShellNotifyIcon(uint message, ref NotifyIconData data);
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern uint RegisterWindowMessage(string name);
     [DllImport("user32.dll")] private static extern nint CreatePopupMenu();

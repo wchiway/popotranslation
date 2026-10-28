@@ -13,9 +13,18 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        var iconPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "PopoTranslation.ico");
+        try
+        {
+            if (System.IO.File.Exists(iconPath)) AppWindow.SetIcon(iconPath);
+        }
+        catch (Exception)
+        {
+            // Keep the default window icon if the optional runtime icon cannot be loaded.
+        }
         ResizeForContent();
         AppWindow.Closing += OnClosing;
-        _controller = new ApplicationController(Settings, DispatcherQueue, ShowSettings, ExitApplication);
+        _controller = new ApplicationController(Settings, DispatcherQueue, ShowSettings, ExitApplication, iconPath);
         _ = _controller.InitializeAsync();
     }
 

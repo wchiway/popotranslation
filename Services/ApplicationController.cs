@@ -1,6 +1,5 @@
 using System;
 using System.Linq;
-using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI.Dispatching;
@@ -26,6 +25,7 @@ internal sealed class ApplicationController : IDisposable
     private readonly DispatcherQueue _dispatcher;
     private readonly Action _openSettings;
     private readonly Action _exit;
+    private readonly string _iconPath;
     private readonly JsonSettingsStore _settingsStore;
     private readonly WindowsSecretStore _secrets;
     private readonly TranslationCoordinator _coordinator = new();
@@ -47,12 +47,13 @@ internal sealed class ApplicationController : IDisposable
 
     public bool CanHide => _tray is not null;
 
-    public ApplicationController(SettingsPage page, DispatcherQueue dispatcher, Action openSettings, Action exit)
+    public ApplicationController(SettingsPage page, DispatcherQueue dispatcher, Action openSettings, Action exit, string iconPath)
     {
         _page = page;
         _dispatcher = dispatcher;
         _openSettings = openSettings;
         _exit = exit;
+        _iconPath = iconPath;
         var directory = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PopoTranslation");
         _settingsStore = new JsonSettingsStore(System.IO.Path.Combine(directory, "settings.json"));
         _secrets = new WindowsSecretStore(System.IO.Path.Combine(directory, "secrets"));
@@ -82,8 +83,7 @@ internal sealed class ApplicationController : IDisposable
                 _spaceHotkey = null;
                 _spaceHotkeyUnavailable = true;
             }
-            var icon = LoadIcon(0, (nint)32512);
-            _tray = new TrayIconService(_native, icon);
+            _tray = new TrayIconService(_native, _iconPath);
             _tray.ActionRequested += OnTrayAction;
         }
         catch
@@ -591,7 +591,4 @@ internal sealed class ApplicationController : IDisposable
         _native?.Dispose();
         _editor.Dispose();
     }
-
-    [DllImport("user32.dll", EntryPoint = "LoadIconW")]
-    private static extern nint LoadIcon(nint instance, nint iconName);
 }
