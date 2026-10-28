@@ -27,6 +27,12 @@ internal sealed class ApplicationController : IDisposable
     private readonly Action _exit;
     private readonly string _iconPath;
     private readonly JsonSettingsStore _settingsStore;
+    private readonly JsonApplicationPreferencesStore _preferencesStore;
+    private readonly SemaphoreSlim _preferencesGate = new(1, 1);
+    private ApplicationPreferences _preferences = new();
+    private volatile bool _notificationsEnabled = true;
+    private bool _preferencesUnavailable;
+    private long _preferencesVersion;
     private readonly WindowsSecretStore _secrets;
     private readonly TranslationCoordinator _coordinator = new();
     private readonly object _startGate = new();
@@ -56,6 +62,8 @@ internal sealed class ApplicationController : IDisposable
         _iconPath = iconPath;
         var directory = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PopoTranslation");
         _settingsStore = new JsonSettingsStore(System.IO.Path.Combine(directory, "settings.json"));
+        _preferencesStore = new JsonApplicationPreferencesStore(System.IO.Path.Combine(directory, "preferences.json"));
+        _page.ApplicationSettingsChanged += OnApplicationSettingsChanged;
         _secrets = new WindowsSecretStore(System.IO.Path.Combine(directory, "secrets"));
         _page.SaveRequested = SaveAsync;
         _page.TestConnectionRequested = TestConnectionAsync;
@@ -67,6 +75,19 @@ internal sealed class ApplicationController : IDisposable
 
     public async Task InitializeAsync()
     {
+        try
+        {
+            _preferences = await _preferencesStore.LoadAsync();
+        }
+        catch
+        {
+            _preferencesUnavailable = true;
+        }
+        if (_disposed) return;
+        ApplyPreferences(_preferences);
+        if (_preferencesUnavailable)
+            _page.SetStatus("无法读取应用设置；现有文件未修改，请检查后重启。", true);
+
         try
         {
             _native = new NativeMessageWindow();
@@ -84,6 +105,7 @@ internal sealed class ApplicationController : IDisposable
                 _spaceHotkeyUnavailable = true;
             }
             _tray = new TrayIconService(_native, _iconPath);
+            _tray.SetEnglish(_preferences.Language == InterfaceLanguage.English);
             _tray.ActionRequested += OnTrayAction;
         }
         catch
@@ -544,17 +566,61 @@ internal sealed class ApplicationController : IDisposable
         }
     });
 
+    private void ApplyPreferences(ApplicationPreferences preferences)
+    {
+        _notificationsEnabled = preferences.NotificationsEnabled;
+        _page.ApplyApplicationSettings(
+            preferences.Language == InterfaceLanguage.English ? "en-US" : "zh-CN",
+            preferences.Theme.ToString(), preferences.NotificationsEnabled);
+        _tray?.SetEnglish(preferences.Language == InterfaceLanguage.English);
+    }
+
+    private async void OnApplicationSettingsChanged(string language, string theme, bool notificationsEnabled)
+    {
+        var version = ++_preferencesVersion;
+        if (_preferencesUnavailable)
+        {
+            ApplyPreferences(_preferences);
+            _page.SetStatus("无法读取应用设置；现有文件未修改，请检查后重启。", true);
+            return;
+        }
+        var next = new ApplicationPreferences(
+            language == "en-US" ? InterfaceLanguage.English : InterfaceLanguage.SimplifiedChinese,
+            Enum.TryParse<ApplicationTheme>(theme, out var parsed) && Enum.IsDefined(parsed) ? parsed : ApplicationTheme.System,
+            notificationsEnabled);
+        _notificationsEnabled = notificationsEnabled;
+        _tray?.SetEnglish(next.Language == InterfaceLanguage.English);
+        await _preferencesGate.WaitAsync();
+        try
+        {
+            await _preferencesStore.SaveAsync(next);
+            _preferences = next;
+        }
+        catch
+        {
+            if (version == _preferencesVersion && !_disposed)
+            {
+                ApplyPreferences(_preferences);
+                _page.SetStatus("无法保存应用设置，已恢复上次设置。", true);
+            }
+        }
+        finally { _preferencesGate.Release(); }
+    }
+
     private void Notify(string message, bool error = false)
     {
-        _dispatcher.TryEnqueue(() => _page.SetStatus(message, error));
-        var tray = _tray;
-        if (tray is null) return;
-        // The native thread can be blocked inside TrackPopupMenu. Never make the UI thread
-        // wait for a notification while the tray menu is open.
-        _ = Task.Run(() =>
+        _dispatcher.TryEnqueue(() =>
         {
-            try { tray.ShowNotification("PopoTranslation", message); }
-            catch { /* Notifications are best effort. */ }
+            _page.SetStatus(message, error);
+            var localized = _page.Localize(message);
+            var tray = _tray;
+            if (tray is null || !_notificationsEnabled) return;
+            // The native thread can be blocked inside TrackPopupMenu.
+            _ = Task.Run(() =>
+            {
+                try { if (_notificationsEnabled && !_disposed) tray.ShowNotification("PopoTranslation", localized); }
+                catch { /* Notifications are best effort. */ }
+            });
         });
     }
 
@@ -643,6 +709,7 @@ internal sealed class ApplicationController : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _page.ApplicationSettingsChanged -= OnApplicationSettingsChanged;
         Invalidate();
         _pending?.Dispose();
         _spaceHotkey?.Dispose();

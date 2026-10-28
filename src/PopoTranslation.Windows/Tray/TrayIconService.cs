@@ -15,6 +15,8 @@ public sealed class TrayIconService : IDisposable
     private readonly bool _ownsIcon;
     private bool _disposed;
     private bool _paused;
+    private volatile bool _english;
+    public void SetEnglish(bool english) => _english = english;
     public event Action<TrayAction>? ActionRequested;
 
     public TrayIconService(NativeMessageWindow window, string iconPath, string tooltip = "PopoTranslation")
@@ -65,8 +67,6 @@ public sealed class TrayIconService : IDisposable
         return ShellNotifyIcon(1, ref notification);
     });
 
-    public bool NotifyResultAvailable() => ShowNotification("翻译已完成", "点击查看译文并手动应用。");
-
     private void OnMessage(uint message, nint wParam, nint lParam)
     {
         if (_disposed) return;
@@ -83,9 +83,10 @@ public sealed class TrayIconService : IDisposable
         if (menu == 0) return;
         try
         {
-            AppendMenu(menu, 0, 1, "打开设置");
-            AppendMenu(menu, 0, 2, _paused ? "恢复" : "暂停");
-            AppendMenu(menu, 0, 3, "退出");
+            var english = _english;
+            AppendMenu(menu, 0, 1, english ? "Open settings" : "打开设置");
+            AppendMenu(menu, 0, 2, english ? (_paused ? "Resume" : "Pause") : (_paused ? "恢复" : "暂停"));
+            AppendMenu(menu, 0, 3, english ? "Exit" : "退出");
             GetCursorPos(out var point);
             SetForegroundWindow(_window.Handle);
             var command = TrackPopupMenu(menu, 0x0100 | 0x0002, point.X, point.Y, 0, _window.Handle, 0);

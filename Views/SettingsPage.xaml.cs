@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Automation;
 using Windows.ApplicationModel.DataTransfer;
 using PopoTranslation.Core;
 
@@ -49,6 +50,112 @@ public sealed partial class SettingsPage : Page
     private Draft? _baseline;
     private ComboBoxItem? _savedTargetLanguageItem;
     private ComboBoxItem? _savedQwenModelItem;
+    private bool _updatingApplicationSettings = true;
+    private string _language = "zh-CN";
+    private string _statusMessage = "保存设置后，使用快捷键开始翻译。";
+    private bool _statusWasSet;
+    private readonly List<(Action<string> Set, string Original)> _localizedProperties = [];
+
+    public event Action<string, string, bool>? ApplicationSettingsChanged;
+
+    // Values are stable persistence identifiers, independent of the displayed language.
+    public void ApplyApplicationSettings(string language, string theme, bool notificationsEnabled) =>
+        ApplyApplicationSettingsCore(language, theme, notificationsEnabled, true);
+
+    private void ApplyApplicationSettingsCore(string language, string theme, bool notificationsEnabled, bool enableControls)
+    {
+        _updatingApplicationSettings = true;
+        try
+        {
+            _language = language == "en-US" ? "en-US" : "zh-CN";
+            AppLanguageBox.SelectedIndex = _language == "en-US" ? 1 : 0;
+            AppThemeBox.SelectedIndex = theme switch { "Light" => 1, "Dark" => 2, _ => 0 };
+            NotificationsToggle.IsOn = notificationsEnabled;
+            AppLanguageBox.IsEnabled = enableControls;
+            AppThemeBox.IsEnabled = enableControls;
+            NotificationsToggle.IsEnabled = enableControls;
+            RequestedTheme = theme switch { "Light" => ElementTheme.Light, "Dark" => ElementTheme.Dark, _ => ElementTheme.Default };
+            RefreshLanguage();
+        }
+        finally { _updatingApplicationSettings = false; }
+    }
+
+    public string Localize(string chinese)
+    {
+        if (_language != "en-US") return chinese;
+        if (UiLocalization.English.TryGetValue(chinese, out var translated)) return translated;
+        const string prefix = "UIA 将 ";
+        const string protectedSuffix = " 标记为受保护；请确认焦点在聊天输入框，而不是密码或支付输入框。";
+        const string unknownPrefix = "UIA 无法确认 ";
+        const string unknownSuffix = " 是否受保护；请把光标放进聊天输入框后重试。";
+        if (chinese.StartsWith(prefix, StringComparison.Ordinal) && chinese.EndsWith(protectedSuffix, StringComparison.Ordinal))
+            return $"UIA marks {chinese[prefix.Length..^protectedSuffix.Length]} as protected. Ensure focus is in a chat input box, not a credential or payment field.";
+        if (chinese.StartsWith(unknownPrefix, StringComparison.Ordinal) && chinese.EndsWith(unknownSuffix, StringComparison.Ordinal))
+            return $"UIA cannot determine whether {chinese[unknownPrefix.Length..^unknownSuffix.Length]} is protected. Put the cursor in a chat input box and try again.";
+        return chinese;
+    }
+
+    private void AppSettings_SelectionChanged(object sender, SelectionChangedEventArgs e) => OnApplicationSettingsChanged();
+    private void AppSettings_Toggled(object sender, RoutedEventArgs e) => OnApplicationSettingsChanged();
+
+    private void OnApplicationSettingsChanged()
+    {
+        if (_updatingApplicationSettings || AppLanguageBox?.SelectedItem is not ComboBoxItem language || AppThemeBox?.SelectedItem is not ComboBoxItem theme || NotificationsToggle is null) return;
+        var languageValue = (string)language.Tag;
+        var themeValue = (string)theme.Tag;
+        ApplyApplicationSettings(languageValue, themeValue, NotificationsToggle.IsOn);
+        ApplicationSettingsChanged?.Invoke(languageValue, themeValue, NotificationsToggle.IsOn);
+    }
+
+    private void CaptureLocalizedProperties(object? node)
+    {
+        if (node is null) return;
+        void Add(string? value, Action<string> setter)
+        {
+            if (!string.IsNullOrEmpty(value) && UiLocalization.English.ContainsKey(value)) _localizedProperties.Add((setter, value));
+        }
+        if (node is DependencyObject dependency)
+            Add(AutomationProperties.GetName(dependency), value => AutomationProperties.SetName(dependency, value));
+        switch (node)
+        {
+            case TextBlock text: Add(text.Text, value => text.Text = value); break;
+            case TextBox box:
+                Add(box.Header as string, value => box.Header = value);
+                Add(box.PlaceholderText, value => box.PlaceholderText = value);
+                break;
+            case PasswordBox box:
+                Add(box.Header as string, value => box.Header = value);
+                Add(box.PlaceholderText, value => box.PlaceholderText = value);
+                break;
+            case ComboBox combo:
+                Add(combo.Header as string, value => combo.Header = value);
+                foreach (var item in combo.Items) CaptureLocalizedProperties(item);
+                break;
+            case ToggleSwitch toggle:
+                Add(toggle.Header as string, value => toggle.Header = value);
+                Add(toggle.OnContent as string, value => toggle.OnContent = value);
+                Add(toggle.OffContent as string, value => toggle.OffContent = value);
+                break;
+            case InfoBar: break; // Status is refreshed from its original message separately.
+            case ScrollViewer scroll: CaptureLocalizedProperties(scroll.Content); break;
+            case ContentControl content:
+                if (content.Content is string label) Add(label, value => content.Content = value);
+                else CaptureLocalizedProperties(content.Content);
+                break;
+            case Panel panel:
+                foreach (var child in panel.Children) CaptureLocalizedProperties(child);
+                break;
+            case Border border: CaptureLocalizedProperties(border.Child); break;
+        }
+    }
+
+    private void RefreshLanguage()
+    {
+        foreach (var (set, original) in _localizedProperties) set(Localize(original));
+        StatusBar.Title = Localize(_statusWasSet ? (StatusBar.Severity == InfoBarSeverity.Error ? "需要注意" : "状态") : "准备就绪");
+        StatusBar.Message = Localize(_statusMessage);
+        if (!_loadingSettings) UpdateProtocolFields();
+    }
 
     private sealed record Draft(string Name, string Protocol, string BaseUrl, string ModelId, string Timeout,
         string SourceLanguage, string TargetLanguage, string Style, string SelectionHotkey, string WholeControlHotkey);
@@ -64,6 +171,8 @@ public sealed partial class SettingsPage : Page
     public SettingsPage()
     {
         InitializeComponent();
+        CaptureLocalizedProperties(Content);
+        ApplyApplicationSettingsCore("zh-CN", "System", true, false);
         TimeoutBox.Text = "30";
     }
 
@@ -247,22 +356,22 @@ public sealed partial class SettingsPage : Page
         QwenRegionHint.Visibility = qwen ? Visibility.Visible : Visibility.Collapsed;
         StyleBox.Visibility = machine ? Visibility.Collapsed : Visibility.Visible;
         MachineStyleHint.Visibility = machine ? Visibility.Visible : Visibility.Collapsed;
-        MachineStyleHint.Text = protocol == "AlibabaTranslate"
+        MachineStyleHint.Text = Localize(protocol == "AlibabaTranslate"
             ? "机器翻译不使用翻译风格设置；阿里云暂不支持繁體中文。"
-            : "机器翻译不使用翻译风格设置。";
+            : "机器翻译不使用翻译风格设置。");
         SourceLanguageBox.Visibility = machine ? Visibility.Collapsed : Visibility.Visible;
         MachineSourceLanguageBox.Visibility = machine ? Visibility.Visible : Visibility.Collapsed;
         SecondaryKeyBox.Visibility = secondary ? Visibility.Visible : Visibility.Collapsed;
         SecondaryKeyHint.Visibility = secondary ? Visibility.Visible : Visibility.Collapsed;
-        ApiKeyBox.Header = protocol switch
+        ApiKeyBox.Header = Localize(protocol switch
         {
             "AlibabaTranslate" => "AccessKey ID",
             "BaiduTranslate" => "APP ID",
             "YoudaoTranslate" => "应用 ID",
             _ => "API Key"
-        };
-        SecondaryKeyBox.Header = protocol == "AlibabaTranslate" ? "AccessKey Secret" : "应用密钥";
-        BaseUrlBox.PlaceholderText = protocol == "DeepLTranslate" ? "留空使用 DeepL 免费版地址；付费版请输入官方地址" : "留空使用官方默认地址";
+        });
+        SecondaryKeyBox.Header = Localize(protocol == "AlibabaTranslate" ? "AccessKey Secret" : "应用密钥");
+        BaseUrlBox.PlaceholderText = Localize(protocol == "DeepLTranslate" ? "留空使用 DeepL 免费版地址；付费版请输入官方地址" : "留空使用官方默认地址");
         UpdateKeyHint();
     }
 
@@ -281,9 +390,11 @@ public sealed partial class SettingsPage : Page
 
     public void SetStatus(string message, bool isError = false)
     {
+        _statusWasSet = true;
+        _statusMessage = message;
         StatusBar.Severity = isError ? InfoBarSeverity.Error : InfoBarSeverity.Informational;
-        StatusBar.Title = isError ? "需要注意" : "状态";
-        StatusBar.Message = message;
+        StatusBar.Title = Localize(isError ? "需要注意" : "状态");
+        StatusBar.Message = Localize(message);
         StatusBar.IsOpen = true;
     }
 
@@ -432,10 +543,10 @@ public sealed partial class SettingsPage : Page
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot,
-                Title = "删除服务？",
-                Content = "此操作将删除当前服务配置及其保存的密钥。",
-                PrimaryButtonText = "删除",
-                CloseButtonText = "取消",
+                Title = Localize("删除服务？"),
+                Content = Localize("此操作将删除当前服务配置及其保存的密钥。"),
+                PrimaryButtonText = Localize("删除"),
+                CloseButtonText = Localize("取消"),
                 DefaultButton = ContentDialogButton.Close
             };
             if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
@@ -452,10 +563,10 @@ public sealed partial class SettingsPage : Page
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
-            Title = "放弃未保存的更改？",
-            Content = "切换或修改服务列表会放弃当前页面未保存的设置和密钥输入。",
-            PrimaryButtonText = "放弃更改",
-            CloseButtonText = "返回编辑",
+            Title = Localize("放弃未保存的更改？"),
+            Content = Localize("切换或修改服务列表会放弃当前页面未保存的设置和密钥输入。"),
+            PrimaryButtonText = Localize("放弃更改"),
+            CloseButtonText = Localize("返回编辑"),
             DefaultButton = ContentDialogButton.Close
         };
         return await dialog.ShowAsync() == ContentDialogResult.Primary;
@@ -543,11 +654,11 @@ public sealed partial class SettingsPage : Page
 
     private void UpdateKeyHint()
     {
-        ApiKeyHint.Text = CanUseSavedCredential && _hasSavedApiKey ? "已保存凭据；留空可继续使用，输入新值可替换。"
+        ApiKeyHint.Text = Localize(CanUseSavedCredential && _hasSavedApiKey ? "已保存凭据；留空可继续使用，输入新值可替换。"
             : SelectedProtocol == "QwenMt" && _loadedProtocol == "QwenMt" && _hasSavedApiKey
                 ? "服务地址已更改，请输入对应地域的 API Key。"
-                : "凭据会在保存时交由应用安全存储。";
-        SecondaryKeyHint.Text = CanUseSavedCredential && _hasSavedSecondaryCredential ? "已保存密钥；留空可继续使用，输入新值可替换。" : "密钥会在保存时交由应用安全存储。";
+                : "凭据会在保存时交由应用安全存储。");
+        SecondaryKeyHint.Text = Localize(CanUseSavedCredential && _hasSavedSecondaryCredential ? "已保存密钥；留空可继续使用，输入新值可替换。" : "密钥会在保存时交由应用安全存储。");
     }
 
     private async void Apply_Click(object sender, RoutedEventArgs e)
