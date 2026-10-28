@@ -444,9 +444,12 @@ internal sealed class ApplicationController : IDisposable
             else
             {
                 _page.SetResult(result.Text);
-                Notify(replacement.Status == ReplacementStatus.SubmittedUnconfirmed
-                    ? "已提交回填但无法确认，请检查目标输入框；译文可在设置中复制。"
-                    : "无法安全回填，译文可在设置中复制。", true);
+                Notify(replacement.Status switch
+                {
+                    ReplacementStatus.SubmittedUnconfirmed => "已提交回填但无法确认，请检查目标输入框；译文可在设置中复制。",
+                    ReplacementStatus.OutcomeUnknown => "回填结果不确定，请先检查目标输入框；译文可在设置中复制。",
+                    _ => "未能自动回填，译文可在设置中复制。"
+                }, true);
             }
         }
         catch (OperationCanceledException)

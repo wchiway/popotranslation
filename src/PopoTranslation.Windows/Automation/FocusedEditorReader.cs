@@ -8,6 +8,16 @@ using PopoTranslation.Windows.Editing;
 
 namespace PopoTranslation.Windows.Automation;
 
+public static class ClipboardPasteSubmission
+{
+    public static ReplacementSubmission FromClipboardStatus(ClipboardPasteStatus status) => status switch
+    {
+        ClipboardPasteStatus.NotSubmitted => ReplacementSubmission.NotSubmitted,
+        ClipboardPasteStatus.Submitted => ReplacementSubmission.Submitted,
+        _ => ReplacementSubmission.Unknown
+    };
+}
+
 public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
 {
     private const int MaxTextLength = 1_000_000;
@@ -268,17 +278,17 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
             return _before;
         }
 
-        public void SetValue(string text)
+        public ReplacementSubmission SetValue(string text)
         {
             if (_value is not null)
             {
                 _value.SetValue(text);
                 _usedClipboard = false;
-                return;
+                return ReplacementSubmission.Submitted;
             }
             _usedClipboard = true;
-            if (!clipboard.Paste(snapshot.WindowHandle, text, snapshot.Mode == CaptureMode.WholeControl, cancellationToken: cancellationToken, isCurrent: isCurrent))
-                throw new InvalidOperationException("无法提交剪贴板粘贴。");
+            return ClipboardPasteSubmission.FromClipboardStatus(clipboard.Paste(snapshot.WindowHandle, text,
+                snapshot.Mode == CaptureMode.WholeControl, cancellationToken: cancellationToken, isCurrent: isCurrent));
         }
 
         public bool ConfirmValue(string text)
@@ -326,10 +336,11 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
             return matches ? snapshot : null;
         }
 
-        public void SetValue(string text)
+        public ReplacementSubmission SetValue(string text)
         {
-            _pasted = clipboard.Paste(snapshot.WindowHandle, text, snapshot.Mode == CaptureMode.WholeControl, cancellationToken: cancellationToken, isCurrent: isCurrent);
-            if (!_pasted) throw new InvalidOperationException("无法提交剪贴板粘贴。");
+            var status = clipboard.Paste(snapshot.WindowHandle, text, snapshot.Mode == CaptureMode.WholeControl, cancellationToken: cancellationToken, isCurrent: isCurrent);
+            _pasted = status == ClipboardPasteStatus.Submitted;
+            return ClipboardPasteSubmission.FromClipboardStatus(status);
         }
 
         public bool ConfirmValue(string text)

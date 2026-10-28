@@ -37,7 +37,7 @@ public sealed record EditorSnapshot(
 
 public sealed record CaptureResult(CaptureStatus Status, EditorSnapshot? Snapshot = null, string? Reason = null);
 
-public enum ReplacementStatus { Applied, SubmittedUnconfirmed, ManualApply, Failed }
+public enum ReplacementStatus { Applied, SubmittedUnconfirmed, ManualApply, Failed, OutcomeUnknown }
 public sealed record ReplacementResult(ReplacementStatus Status, string? Reason = null);
 
 public interface IFocusedEditor

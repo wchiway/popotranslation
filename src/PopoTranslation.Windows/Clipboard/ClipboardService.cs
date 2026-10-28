@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using PopoTranslation.Windows.Input;
 using PopoTranslation.Windows.Diagnostics;
@@ -5,6 +6,7 @@ using PopoTranslation.Windows.Diagnostics;
 namespace PopoTranslation.Windows.Clipboard;
 
 public enum ClipboardCaptureStatus { Captured, NoSelection, Unavailable }
+public enum ClipboardPasteStatus { NotSubmitted, Submitted, Unknown }
 
 public sealed record ClipboardCaptureResult(ClipboardCaptureStatus Status, string? Text = null, string? Reason = null);
 
@@ -26,11 +28,11 @@ public sealed class ClipboardService : IDisposable
         _worker.Invoke(() => CaptureCoreAsync(expectedForeground, selectAll, terminalCopy, cancellationToken),
             cancellationToken);
 
-    public bool Paste(nint expectedForeground, string text, bool selectAll, bool terminal = false,
+    public ClipboardPasteStatus Paste(nint expectedForeground, string text, bool selectAll, bool terminal = false,
         CancellationToken cancellationToken = default, Func<bool>? isCurrent = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(text);
-        if (terminal) return false;
+        if (terminal) return ClipboardPasteStatus.NotSubmitted;
         return _worker.Invoke(() => PasteCoreAsync(expectedForeground, text, selectAll, cancellationToken, isCurrent), cancellationToken);
     }
 
@@ -124,34 +126,34 @@ public sealed class ClipboardService : IDisposable
         }
     }
 
-    private static async Task<bool> PasteCoreAsync(nint expectedForeground, string text, bool selectAll,
+    private static async Task<ClipboardPasteStatus> PasteCoreAsync(nint expectedForeground, string text, bool selectAll,
         CancellationToken cancellationToken, Func<bool>? isCurrent)
     {
         DiagnosticLog.Write($"event=paste-start selectAll={selectAll} foregroundMatches={GetForegroundWindow() == expectedForeground}");
         cancellationToken.ThrowIfCancellationRequested();
-        if (GetForegroundWindow() != expectedForeground) return false;
-        if (!TryReadClipboard(out var oldData, out _)) { DiagnosticLog.Write("event=paste-result stage=read-clipboard"); return false; }
-        if (!await TrySetTextAsync(text, cancellationToken)) { DiagnosticLog.Write("event=paste-result stage=set-clipboard"); return false; }
+        if (GetForegroundWindow() != expectedForeground) return ClipboardPasteStatus.NotSubmitted;
+        if (!TryReadClipboard(out var oldData, out _)) { DiagnosticLog.Write("event=paste-result stage=read-clipboard"); return ClipboardPasteStatus.NotSubmitted; }
+        if (!await TrySetTextAsync(text, cancellationToken)) { DiagnosticLog.Write("event=paste-result stage=set-clipboard"); return ClipboardPasteStatus.NotSubmitted; }
         try
         {
-            if (!await WaitForShortcutKeysReleasedAsync(cancellationToken)) { DiagnosticLog.Write("event=paste-result stage=keys-held"); return false; }
+            if (!await WaitForShortcutKeysReleasedAsync(cancellationToken)) { DiagnosticLog.Write("event=paste-result stage=keys-held"); return ClipboardPasteStatus.NotSubmitted; }
             cancellationToken.ThrowIfCancellationRequested();
-            if (GetForegroundWindow() != expectedForeground) { DiagnosticLog.Write("event=paste-result stage=focus"); return false; }
-            if (isCurrent is not null && !isCurrent()) { DiagnosticLog.Write("event=paste-result stage=stale"); return false; }
+            if (GetForegroundWindow() != expectedForeground) { DiagnosticLog.Write("event=paste-result stage=focus"); return ClipboardPasteStatus.NotSubmitted; }
+            if (isCurrent is not null && !isCurrent()) { DiagnosticLog.Write("event=paste-result stage=stale"); return ClipboardPasteStatus.NotSubmitted; }
             if (selectAll)
             {
-                if (!KeyboardSimulator.SendSelectAll()) { DiagnosticLog.Write("event=paste-result stage=select-all"); return false; }
+                if (!KeyboardSimulator.SendSelectAll()) { DiagnosticLog.Write("event=paste-result stage=select-all"); return ClipboardPasteStatus.NotSubmitted; }
                 await Task.Delay(40, cancellationToken);
             }
             cancellationToken.ThrowIfCancellationRequested();
-            if (GetForegroundWindow() != expectedForeground) { DiagnosticLog.Write("event=paste-result stage=focus"); return false; }
-            if (KeyboardSimulator.AreModifiersDown() || KeyboardSimulator.IsSpaceDown()) { DiagnosticLog.Write("event=paste-result stage=keys-held"); return false; }
-            if (isCurrent is not null && !isCurrent()) { DiagnosticLog.Write("event=paste-result stage=stale"); return false; }
-            if (!KeyboardSimulator.SendPaste()) { DiagnosticLog.Write("event=paste-result stage=send"); return false; }
+            if (GetForegroundWindow() != expectedForeground) { DiagnosticLog.Write("event=paste-result stage=focus"); return ClipboardPasteStatus.NotSubmitted; }
+            if (KeyboardSimulator.AreModifiersDown() || KeyboardSimulator.IsSpaceDown()) { DiagnosticLog.Write("event=paste-result stage=keys-held"); return ClipboardPasteStatus.NotSubmitted; }
+            if (isCurrent is not null && !isCurrent()) { DiagnosticLog.Write("event=paste-result stage=stale"); return ClipboardPasteStatus.NotSubmitted; }
+            if (!KeyboardSimulator.SendPaste()) { DiagnosticLog.Write("event=paste-result stage=send"); return ClipboardPasteStatus.Unknown; }
             DiagnosticLog.Write("event=paste-result stage=submitted");
             // After submission always finish restoration; cancellation cannot undo a sent paste.
             await Task.Delay(1200);
-            return true;
+            return ClipboardPasteStatus.Submitted;
         }
         finally { RestoreClipboard(oldData, text); }
     }
@@ -160,13 +162,16 @@ public sealed class ClipboardService : IDisposable
     {
         oldData = null;
         reason = null;
+        var timer = Stopwatch.StartNew();
         try
         {
             oldData = System.Windows.Clipboard.GetDataObject();
+            DiagnosticLog.Write($"event=clipboard-operation operation=get-data-object status=success elapsedMs={timer.ElapsedMilliseconds} hasData={oldData is not null}");
             return true;
         }
-        catch
+        catch (Exception error)
         {
+            DiagnosticLog.Write($"event=clipboard-operation operation=get-data-object status=failed elapsedMs={timer.ElapsedMilliseconds} type={error.GetType().Name} hresult={error.HResult:X8}");
             reason = "无法读取剪贴板。";
             return false;
         }
@@ -177,6 +182,7 @@ public sealed class ClipboardService : IDisposable
         for (var attempt = 0; attempt < 3; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var timer = Stopwatch.StartNew();
             try
             {
                 var data = new System.Windows.DataObject();
@@ -184,9 +190,14 @@ public sealed class ClipboardService : IDisposable
                 // Windows ignores all formats in this item when this registered format is present.
                 data.SetData(ExcludeFromClipboardMonitor, new System.IO.MemoryStream(new byte[] { 1 }), autoConvert: false);
                 System.Windows.Clipboard.SetDataObject(data, copy: true);
+                DiagnosticLog.Write($"event=clipboard-operation operation=set-temporary status=success attempt={attempt + 1} elapsedMs={timer.ElapsedMilliseconds}");
                 return true;
             }
-            catch { await Task.Delay(40, cancellationToken); }
+            catch (Exception error)
+            {
+                DiagnosticLog.Write($"event=clipboard-operation operation=set-temporary status=failed attempt={attempt + 1} elapsedMs={timer.ElapsedMilliseconds} type={error.GetType().Name} hresult={error.HResult:X8}");
+                await Task.Delay(40, cancellationToken);
+            }
         }
         return false;
     }
@@ -207,25 +218,45 @@ public sealed class ClipboardService : IDisposable
         return false;
     }
 
-    private static bool TryGetText(out string text)
+    private static bool TryGetText(out string text, bool logFailure = false)
     {
+        var timer = logFailure ? Stopwatch.StartNew() : null;
         try
         {
             text = System.Windows.Clipboard.ContainsText() ? System.Windows.Clipboard.GetText() : string.Empty;
             return true;
         }
-        catch { text = string.Empty; return false; }
+        catch (Exception error)
+        {
+            if (logFailure)
+                DiagnosticLog.Write($"event=clipboard-operation operation=check-current-text status=failed elapsedMs={timer!.ElapsedMilliseconds} type={error.GetType().Name} hresult={error.HResult:X8}");
+            text = string.Empty;
+            return false;
+        }
     }
 
     private static void RestoreClipboard(System.Windows.IDataObject? oldData, string? expectedCurrent)
     {
+        var timer = Stopwatch.StartNew();
+        var operation = "check-current";
         try
         {
-            if (expectedCurrent is not null && (!TryGetText(out var current) || current != expectedCurrent)) return;
+            if (expectedCurrent is not null && (!TryGetText(out var current, logFailure: true) || current != expectedCurrent))
+            {
+                DiagnosticLog.Write($"event=clipboard-operation operation={operation} status=skipped elapsedMs={timer.ElapsedMilliseconds}");
+                return;
+            }
+            DiagnosticLog.Write($"event=clipboard-operation operation={operation} status=matched elapsedMs={timer.ElapsedMilliseconds}");
+            operation = oldData is not null ? "restore-data-object" : "restore-clear";
+            timer.Restart();
             if (oldData is not null) System.Windows.Clipboard.SetDataObject(oldData, copy: true);
             else System.Windows.Clipboard.Clear();
+            DiagnosticLog.Write($"event=clipboard-operation operation={operation} status=success elapsedMs={timer.ElapsedMilliseconds}");
         }
-        catch { /* Clipboard restoration is best effort. */ }
+        catch (Exception error)
+        {
+            DiagnosticLog.Write($"event=clipboard-operation operation={operation} status=failed elapsedMs={timer.ElapsedMilliseconds} type={error.GetType().Name} hresult={error.HResult:X8}");
+        }
     }
 
     public void Dispose() => _worker.Dispose();

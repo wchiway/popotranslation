@@ -1,4 +1,5 @@
 using PopoTranslation.Windows.Automation;
+using PopoTranslation.Windows.Clipboard;
 using PopoTranslation.Windows.Editing;
 using PopoTranslation.Windows.Hotkeys;
 using PopoTranslation.Windows.Messaging;
@@ -61,9 +62,23 @@ Check(EditorReplacer.Replace(whole, "译文", backend).Status == ReplacementStat
 backend.Confirmed = false;
 Check(EditorReplacer.Replace(whole, "译文", backend).Status == ReplacementStatus.SubmittedUnconfirmed,
     "写入未确认时不得报告成功");
+backend.Submission = ReplacementSubmission.NotSubmitted;
+var confirmsBefore = backend.Confirmations;
+Check(EditorReplacer.Replace(whole, "译文", backend).Status == ReplacementStatus.ManualApply && backend.Confirmations == confirmsBefore,
+    "明确未发送时应允许手动应用且不检查写入结果");
+backend.Submission = ReplacementSubmission.Unknown;
+Check(EditorReplacer.Replace(whole, "译文", backend).Status == ReplacementStatus.OutcomeUnknown && backend.Confirmations == confirmsBefore,
+    "发送情况不确定时不得报告已提交或安全手动应用");
+Check(ClipboardPasteSubmission.FromClipboardStatus(ClipboardPasteStatus.NotSubmitted) == ReplacementSubmission.NotSubmitted &&
+      ClipboardPasteSubmission.FromClipboardStatus(ClipboardPasteStatus.Unknown) == ReplacementSubmission.Unknown &&
+      ClipboardPasteSubmission.FromClipboardStatus(ClipboardPasteStatus.Submitted) == ReplacementSubmission.Submitted,
+    "剪贴板粘贴状态必须保守映射");
 backend.ThrowOnWrite = true;
-Check(EditorReplacer.Replace(whole, "译文", backend).Status == ReplacementStatus.SubmittedUnconfirmed,
-    "写入抛错不能假定未发生写入");
+Check(EditorReplacer.Replace(whole, "译文", backend).Status == ReplacementStatus.OutcomeUnknown,
+    "写入抛错不能假定已发送或未发生写入");
+backend.CancelOnWrite = true;
+Check(EditorReplacer.Replace(whole, "译文", backend).Status == ReplacementStatus.OutcomeUnknown,
+    "写入期间取消不能假定未发生写入");
 using (var reader = new FocusedEditorReader())
 {
     Check((await reader.CaptureAsync(CaptureMode.Selection, 0)).Status == CaptureStatus.NoFocusedEditor,
@@ -168,14 +183,19 @@ sealed class FakeReplacementBackend : IReplacementBackend
     public int Writes { get; private set; }
     public bool Confirmed { get; set; } = true;
     public bool ThrowOnWrite { get; set; }
+    public bool CancelOnWrite { get; set; }
+    public ReplacementSubmission Submission { get; set; } = ReplacementSubmission.Submitted;
+    public int Confirmations { get; private set; }
     public Action? OnObserve { get; set; }
     public EditorSnapshot? ObserveEligibleTarget() { OnObserve?.Invoke(); return Current; }
-    public void SetValue(string text)
+    public ReplacementSubmission SetValue(string text)
     {
         Writes++;
+        if (CancelOnWrite) throw new OperationCanceledException();
         if (ThrowOnWrite) throw new InvalidOperationException();
+        return Submission;
     }
-    public bool ConfirmValue(string text) => Confirmed;
+    public bool ConfirmValue(string text) { Confirmations++; return Confirmed; }
 }
 
 sealed class FakeHotkeyNative : IHotkeyNative
