@@ -29,11 +29,11 @@ public sealed class ClipboardService : IDisposable
             cancellationToken);
 
     public ClipboardPasteStatus Paste(nint expectedForeground, string text, bool selectAll, bool terminal = false,
-        CancellationToken cancellationToken = default, Func<bool>? isCurrent = null)
+        CancellationToken cancellationToken = default, Func<bool>? isCurrent = null, Action? onSubmitted = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(text);
         if (terminal) return ClipboardPasteStatus.NotSubmitted;
-        return _worker.Invoke(() => PasteCoreAsync(expectedForeground, text, selectAll, cancellationToken, isCurrent), cancellationToken);
+        return _worker.Invoke(() => PasteCoreAsync(expectedForeground, text, selectAll, cancellationToken, isCurrent, onSubmitted), cancellationToken);
     }
 
     private static async Task<ClipboardCaptureResult> CaptureCoreAsync(nint expectedForeground, bool selectAll,
@@ -127,7 +127,7 @@ public sealed class ClipboardService : IDisposable
     }
 
     private static async Task<ClipboardPasteStatus> PasteCoreAsync(nint expectedForeground, string text, bool selectAll,
-        CancellationToken cancellationToken, Func<bool>? isCurrent)
+        CancellationToken cancellationToken, Func<bool>? isCurrent, Action? onSubmitted)
     {
         DiagnosticLog.Write($"event=paste-start selectAll={selectAll} foregroundMatches={GetForegroundWindow() == expectedForeground}");
         cancellationToken.ThrowIfCancellationRequested();
@@ -151,6 +151,8 @@ public sealed class ClipboardService : IDisposable
             if (isCurrent is not null && !isCurrent()) { DiagnosticLog.Write("event=paste-result stage=stale"); return ClipboardPasteStatus.NotSubmitted; }
             if (!KeyboardSimulator.SendPaste()) { DiagnosticLog.Write("event=paste-result stage=send"); return ClipboardPasteStatus.Unknown; }
             DiagnosticLog.Write("event=paste-result stage=submitted");
+            try { onSubmitted?.Invoke(); }
+            catch (Exception error) { DiagnosticLog.Write($"event=paste-progress-exception type={error.GetType().Name}"); }
             // After submission always finish restoration; cancellation cannot undo a sent paste.
             await Task.Delay(1200);
             return ClipboardPasteStatus.Submitted;

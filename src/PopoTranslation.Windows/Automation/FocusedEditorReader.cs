@@ -16,6 +16,9 @@ public static class ClipboardPasteSubmission
         ClipboardPasteStatus.Submitted => ReplacementSubmission.Submitted,
         _ => ReplacementSubmission.Unknown
     };
+
+    public static bool TextMatches(string actual, string expected) =>
+        actual.Replace("\r\n", "\n") == expected.Replace("\r\n", "\n");
 }
 
 public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
@@ -96,7 +99,7 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
     // The caller must synchronously execute the callback only while the task is current.
     public async Task<ReplacementResult> ReplaceAsync(EditorSnapshot snapshot, string translatedText,
         Func<Func<ReplacementResult>, ReplacementResult> executeIfCurrent,
-        CancellationToken cancellationToken = default, Func<bool>? isCurrent = null)
+        CancellationToken cancellationToken = default, Func<bool>? isCurrent = null, Action? onPasteSubmitted = null)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentNullException.ThrowIfNull(translatedText);
@@ -104,8 +107,8 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
         if (snapshot.TargetKind == TargetKind.Terminal)
             return new(ReplacementStatus.ManualApply, "终端内容不会被自动替换，请复制译文后手动粘贴。");
         IReplacementBackend backend = snapshot.Method == CaptureMethod.Clipboard || snapshot.Mode == CaptureMode.Selection
-            ? new ClipboardReplacementBackend(snapshot, _clipboard, cancellationToken, isCurrent)
-            : new NativeReplacementBackend(snapshot, _clipboard, cancellationToken, isCurrent);
+            ? new ClipboardReplacementBackend(snapshot, _clipboard, cancellationToken, isCurrent, onPasteSubmitted)
+            : new NativeReplacementBackend(snapshot, _clipboard, cancellationToken, isCurrent, onPasteSubmitted);
         try
         {
             var (accepted, result) = await _worker.InvokeAsync(() =>
@@ -236,7 +239,7 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
             string.Join(",", runtimeId), full, selectionStart, selectionEnd, mode));
     }
 
-    private sealed class NativeReplacementBackend(EditorSnapshot snapshot, ClipboardService clipboard, CancellationToken cancellationToken, Func<bool>? isCurrent) : IReplacementBackend
+    private sealed class NativeReplacementBackend(EditorSnapshot snapshot, ClipboardService clipboard, CancellationToken cancellationToken, Func<bool>? isCurrent, Action? onPasteSubmitted) : IReplacementBackend
     {
         private ValuePattern? _value;
         private EditorSnapshot? _before;
@@ -288,7 +291,7 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
             }
             _usedClipboard = true;
             return ClipboardPasteSubmission.FromClipboardStatus(clipboard.Paste(snapshot.WindowHandle, text,
-                snapshot.Mode == CaptureMode.WholeControl, cancellationToken: cancellationToken, isCurrent: isCurrent));
+                snapshot.Mode == CaptureMode.WholeControl, cancellationToken: cancellationToken, isCurrent: isCurrent, onSubmitted: onPasteSubmitted));
         }
 
         public bool ConfirmValue(string text)
@@ -298,7 +301,7 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
                 if (snapshot.Mode != CaptureMode.WholeControl || _before is null) return false;
                 var current = clipboard.Capture(_before.WindowHandle, selectAll: true);
                 return current.Status == ClipboardCaptureStatus.Captured && current.Text is not null &&
-                    Normalize(current.Text) == Normalize(text);
+                    ClipboardPasteSubmission.TextMatches(current.Text, text);
             }
             var element = AutomationElement.FocusedElement;
             return _before is not null && element is not null &&
@@ -307,12 +310,9 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
                 string.Join(",", element.GetRuntimeId()) == _before.ElementRuntimeId &&
                 _value!.Current.Value == text;
         }
-
-        private static string Normalize(string value) =>
-            value.Replace("\r\n", "\n").TrimEnd('\r', '\n');
     }
 
-    private sealed class ClipboardReplacementBackend(EditorSnapshot snapshot, ClipboardService clipboard, CancellationToken cancellationToken, Func<bool>? isCurrent) : IReplacementBackend
+    private sealed class ClipboardReplacementBackend(EditorSnapshot snapshot, ClipboardService clipboard, CancellationToken cancellationToken, Func<bool>? isCurrent, Action? onPasteSubmitted) : IReplacementBackend
     {
         private bool _pasted;
         public bool SupportsSelection => true;
@@ -338,7 +338,7 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
 
         public ReplacementSubmission SetValue(string text)
         {
-            var status = clipboard.Paste(snapshot.WindowHandle, text, snapshot.Mode == CaptureMode.WholeControl, cancellationToken: cancellationToken, isCurrent: isCurrent);
+            var status = clipboard.Paste(snapshot.WindowHandle, text, snapshot.Mode == CaptureMode.WholeControl, cancellationToken: cancellationToken, isCurrent: isCurrent, onSubmitted: onPasteSubmitted);
             _pasted = status == ClipboardPasteStatus.Submitted;
             return ClipboardPasteSubmission.FromClipboardStatus(status);
         }
@@ -348,11 +348,8 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
             if (!_pasted || snapshot.Mode != CaptureMode.WholeControl) return false;
             var current = clipboard.Capture(snapshot.WindowHandle, selectAll: true);
             return current.Status == ClipboardCaptureStatus.Captured && current.Text is not null &&
-                Normalize(current.Text) == Normalize(text);
+                ClipboardPasteSubmission.TextMatches(current.Text, text);
         }
-
-        private static string Normalize(string value) =>
-            value.Replace("\r\n", "\n").TrimEnd('\r', '\n');
     }
 
     public void Dispose()

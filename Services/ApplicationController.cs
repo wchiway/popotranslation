@@ -430,13 +430,19 @@ internal sealed class ApplicationController : IDisposable
             if (!IsCurrent(generation, token)) return;
             if (!result.IsSuccessful || result.Text is null) { Notify(ResultMessage(result), true); return; }
             var replacementStarted = Environment.TickCount64;
-            var replacement = await _editor.ReplaceAsync(capture.Snapshot, result.Text, action =>
+            Task<ReplacementResult>? replacementTask = null;
+            replacementTask = _editor.ReplaceAsync(capture.Snapshot, result.Text, action =>
             {
                 if (!IsCurrent(generation, token)) return new ReplacementResult(ReplacementStatus.ManualApply);
                 return _coordinator.TryExecuteIfCurrent(operation, () =>
                     IsCurrent(generation, token) ? action() : new ReplacementResult(ReplacementStatus.ManualApply), out var value)
                     ? value : new ReplacementResult(ReplacementStatus.ManualApply);
-            }, token, () => IsCurrent(generation, token));
+            }, token, () => IsCurrent(generation, token), () => _dispatcher.TryEnqueue(() =>
+            {
+                if (IsCurrent(generation, token) && replacementTask is { IsCompleted: false })
+                    _page.SetStatus("正在确认回填…");
+            }));
+            var replacement = await replacementTask;
             DiagnosticLog.Write($"event=replacement-complete generation={generation} status={replacement.Status} elapsedMs={Environment.TickCount64 - replacementStarted}");
             if (!IsCurrent(generation, token)) return;
             if (replacement.Status == ReplacementStatus.Applied)

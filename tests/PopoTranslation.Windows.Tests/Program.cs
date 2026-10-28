@@ -73,6 +73,10 @@ Check(ClipboardPasteSubmission.FromClipboardStatus(ClipboardPasteStatus.NotSubmi
       ClipboardPasteSubmission.FromClipboardStatus(ClipboardPasteStatus.Unknown) == ReplacementSubmission.Unknown &&
       ClipboardPasteSubmission.FromClipboardStatus(ClipboardPasteStatus.Submitted) == ReplacementSubmission.Submitted,
     "剪贴板粘贴状态必须保守映射");
+Check(ClipboardPasteSubmission.TextMatches("第一行\r\n第二行\n", "第一行\n第二行\n"),
+    "回填确认应兼容 CRLF 和 LF");
+Check(!ClipboardPasteSubmission.TextMatches("第一行\n第二行", "第一行\n第二行\n"),
+    "回填确认不得忽略末尾换行丢失");
 backend.ThrowOnWrite = true;
 Check(EditorReplacer.Replace(whole, "译文", backend).Status == ReplacementStatus.OutcomeUnknown,
     "写入抛错不能假定已发送或未发生写入");
