@@ -11,6 +11,10 @@ internal static class ProviderEndpoint
             ApiProtocol.OpenAiChatCompletions or ApiProtocol.OpenAiResponses => "https://api.openai.com/v1",
             ApiProtocol.AnthropicMessages => "https://api.anthropic.com",
             ApiProtocol.GeminiGenerateContent => "https://generativelanguage.googleapis.com",
+            ApiProtocol.AlibabaTranslate => "https://mt.cn-hangzhou.aliyuncs.com",
+            ApiProtocol.BaiduTranslate => "https://fanyi-api.baidu.com",
+            ApiProtocol.YoudaoTranslate => "https://openapi.youdao.com",
+            ApiProtocol.DeepLTranslate => "https://api-free.deepl.com",
             _ => throw new ArgumentException("Unsupported protocol.", nameof(protocol))
         };
         if (string.IsNullOrWhiteSpace(baseUrl)) baseUrl = defaultUrl;

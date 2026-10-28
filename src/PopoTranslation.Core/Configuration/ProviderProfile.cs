@@ -9,4 +9,5 @@ public sealed record ProviderProfile(
     [property: JsonRequired] string BaseUrl,
     [property: JsonRequired] string ModelId,
     [property: JsonRequired] string CredentialReference,
-    [property: JsonRequired] int TimeoutSeconds);
+    [property: JsonRequired] int TimeoutSeconds,
+    string? SecondaryCredentialReference = null);

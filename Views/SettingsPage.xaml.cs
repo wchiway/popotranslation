@@ -22,7 +22,12 @@ public sealed record SettingsForm(
     string TargetLanguage,
     string? Style,
     string SelectionHotkey,
-    string WholeControlHotkey);
+    string WholeControlHotkey,
+    string SecondaryCredential = "",
+    bool HasSavedSecondaryCredential = false)
+{
+    public override string ToString() => "SettingsForm { credentials redacted }";
+}
 
 public sealed record SettingsActionResult(bool Success, string Message);
 public sealed record ProfileOption(string Id, string Name);
@@ -31,6 +36,10 @@ public sealed partial class SettingsPage : Page
 {
     private string _profileId = Guid.NewGuid().ToString("N");
     private bool _hasSavedApiKey;
+    private bool _hasSavedSecondaryCredential;
+    private string? _loadedProtocol;
+    private readonly Dictionary<string, string> _protocolEndpoints = new(StringComparer.Ordinal);
+    private bool _loadingSettings;
     private bool _busy;
     private bool _applyingResult;
     private bool _updatingProfiles;
@@ -60,7 +69,12 @@ public sealed partial class SettingsPage : Page
         ArgumentNullException.ThrowIfNull(settings);
         if (!string.IsNullOrWhiteSpace(settings.ProfileId)) _profileId = settings.ProfileId;
         _selectedProfileId = _profileId;
+        _loadingSettings = true;
+        _loadedProtocol = settings.Protocol;
+        _protocolEndpoints.Clear();
+        _protocolEndpoints[settings.Protocol] = settings.BaseUrl;
         _hasSavedApiKey = settings.HasSavedApiKey;
+        _hasSavedSecondaryCredential = settings.HasSavedSecondaryCredential;
         NameBox.Text = settings.Name;
         ProtocolBox.SelectedIndex = -1;
         foreach (ComboBoxItem item in ProtocolBox.Items)
@@ -74,13 +88,17 @@ public sealed partial class SettingsPage : Page
         BaseUrlBox.Text = settings.BaseUrl;
         ModelBox.Text = settings.ModelId;
         ApiKeyBox.Password = string.Empty;
+        SecondaryKeyBox.Password = string.Empty;
         UpdateKeyHint();
         TimeoutBox.Text = settings.TimeoutSeconds.ToString();
         SourceLanguageBox.Text = settings.SourceLanguage ?? string.Empty;
+        SelectMachineSourceLanguage(settings.SourceLanguage);
         SelectTargetLanguage(settings.TargetLanguage);
         StyleBox.Text = settings.Style ?? string.Empty;
         SelectionHotkeyBox.Text = settings.SelectionHotkey;
         WholeHotkeyBox.Text = settings.WholeControlHotkey;
+        _loadingSettings = false;
+        UpdateProtocolFields();
         _baseline = CaptureForm();
     }
 
@@ -124,17 +142,80 @@ public sealed partial class SettingsPage : Page
         TargetLanguageBox.SelectedItem = selected;
     }
 
+    private string SelectedProtocol => (ProtocolBox.SelectedItem as ComboBoxItem)?.Tag as string ?? string.Empty;
+    private static bool IsMachine(string protocol) => protocol is "AlibabaTranslate" or "BaiduTranslate" or "YoudaoTranslate" or "DeepLTranslate";
+    private static bool NeedsSecondary(string protocol) => protocol is "AlibabaTranslate" or "BaiduTranslate" or "YoudaoTranslate";
+    private bool CanUseSavedCredential => SelectedProtocol == _loadedProtocol;
+    private string SelectedSourceLanguage => IsMachine(SelectedProtocol)
+        ? (MachineSourceLanguageBox.SelectedItem as ComboBoxItem)?.Tag as string ?? string.Empty
+        : SourceLanguageBox.Text;
+
+    private void SelectMachineSourceLanguage(string? language)
+    {
+        var value = language ?? string.Empty;
+        var item = MachineSourceLanguageBox.Items.OfType<ComboBoxItem>()
+            .FirstOrDefault(x => string.Equals(x.Tag as string, value, StringComparison.Ordinal));
+        if (item is null && value.Length != 0)
+        {
+            item = new ComboBoxItem { Content = $"{value}（已保存）", Tag = value };
+            MachineSourceLanguageBox.Items.Add(item);
+        }
+        MachineSourceLanguageBox.SelectedItem = item;
+    }
+
+    private void Protocol_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingSettings || ApiKeyBox is null || SecondaryKeyBox is null || MachineSourceLanguageBox is null || BaseUrlBox is null) return;
+        // Keep endpoints per protocol; never carry transient credentials across protocols.
+        var previousProtocol = (e.RemovedItems.OfType<ComboBoxItem>().FirstOrDefault()?.Tag as string) ?? string.Empty;
+        if (previousProtocol.Length != 0) _protocolEndpoints[previousProtocol] = BaseUrlBox.Text;
+        ApiKeyBox.Password = string.Empty;
+        SecondaryKeyBox.Password = string.Empty;
+        BaseUrlBox.Text = _protocolEndpoints.GetValueOrDefault(SelectedProtocol, string.Empty);
+        if (IsMachine(SelectedProtocol) && !IsMachine(previousProtocol)) SelectMachineSourceLanguage(SourceLanguageBox.Text);
+        else if (!IsMachine(SelectedProtocol) && IsMachine(previousProtocol))
+            SourceLanguageBox.Text = (MachineSourceLanguageBox.SelectedItem as ComboBoxItem)?.Tag as string ?? SourceLanguageBox.Text;
+        UpdateProtocolFields();
+    }
+
+    private void UpdateProtocolFields()
+    {
+        var protocol = SelectedProtocol;
+        var machine = IsMachine(protocol);
+        var secondary = NeedsSecondary(protocol);
+        ModelBox.Visibility = machine ? Visibility.Collapsed : Visibility.Visible;
+        StyleBox.Visibility = machine ? Visibility.Collapsed : Visibility.Visible;
+        MachineStyleHint.Visibility = machine ? Visibility.Visible : Visibility.Collapsed;
+        MachineStyleHint.Text = protocol == "AlibabaTranslate"
+            ? "机器翻译不使用翻译风格设置；阿里云暂不支持繁體中文。"
+            : "机器翻译不使用翻译风格设置。";
+        SourceLanguageBox.Visibility = machine ? Visibility.Collapsed : Visibility.Visible;
+        MachineSourceLanguageBox.Visibility = machine ? Visibility.Visible : Visibility.Collapsed;
+        SecondaryKeyBox.Visibility = secondary ? Visibility.Visible : Visibility.Collapsed;
+        SecondaryKeyHint.Visibility = secondary ? Visibility.Visible : Visibility.Collapsed;
+        ApiKeyBox.Header = protocol switch
+        {
+            "AlibabaTranslate" => "AccessKey ID",
+            "BaiduTranslate" => "APP ID",
+            "YoudaoTranslate" => "应用 ID",
+            _ => "API Key"
+        };
+        SecondaryKeyBox.Header = protocol == "AlibabaTranslate" ? "AccessKey Secret" : "应用密钥";
+        BaseUrlBox.PlaceholderText = protocol == "DeepLTranslate" ? "留空使用 DeepL 免费版地址；付费版请输入官方地址" : "留空使用官方默认地址";
+        UpdateKeyHint();
+    }
+
     private string SelectedTargetLanguage => (TargetLanguageBox.SelectedItem as ComboBoxItem)?.Tag as string ?? string.Empty;
 
     private Draft CaptureForm() => new(
         NameBox.Text, (ProtocolBox.SelectedItem as ComboBoxItem)?.Tag as string ?? string.Empty,
-        BaseUrlBox.Text, ModelBox.Text, TimeoutBox.Text, SourceLanguageBox.Text,
+        BaseUrlBox.Text, ModelBox.Text, TimeoutBox.Text, SelectedSourceLanguage,
         SelectedTargetLanguage, StyleBox.Text, SelectionHotkeyBox.Text, WholeHotkeyBox.Text);
 
     private bool HasUnsavedChanges()
     {
         if (_baseline is null) return true;
-        return !string.IsNullOrEmpty(ApiKeyBox.Password) || CaptureForm() != _baseline;
+        return !string.IsNullOrEmpty(ApiKeyBox.Password) || !string.IsNullOrEmpty(SecondaryKeyBox.Password) || CaptureForm() != _baseline;
     }
 
     public void SetStatus(string message, bool isError = false)
@@ -187,13 +268,16 @@ public sealed partial class SettingsPage : Page
         try
         {
             var result = await action(form!);
-            if (saving && result.Success && !string.IsNullOrEmpty(form!.ApiKey))
+            if (saving && result.Success)
             {
+                _loadedProtocol = form!.Protocol;
                 _hasSavedApiKey = true;
+                _hasSavedSecondaryCredential = NeedsSecondary(form.Protocol);
                 ApiKeyBox.Password = string.Empty;
+                SecondaryKeyBox.Password = string.Empty;
                 UpdateKeyHint();
+                _baseline = CaptureForm();
             }
-            if (saving && result.Success) _baseline = CaptureForm();
             SetStatus(result.Message, !result.Success);
         }
         catch (Exception)
@@ -214,6 +298,8 @@ public sealed partial class SettingsPage : Page
         AddProfileButton.IsEnabled = !busy;
         DeleteProfileButton.IsEnabled = !busy;
         SourceLanguageBox.IsEnabled = !busy;
+        MachineSourceLanguageBox.IsEnabled = !busy;
+        SecondaryKeyBox.IsEnabled = !busy;
         TargetLanguageBox.IsEnabled = !busy;
         StyleBox.IsEnabled = !busy;
         SelectionHotkeyBox.IsEnabled = !busy;
@@ -319,9 +405,15 @@ public sealed partial class SettingsPage : Page
         var baseUrl = BaseUrlBox.Text.Trim();
         var model = ModelBox.Text.Trim();
         var target = SelectedTargetLanguage;
-        if (name.Length == 0 || model.Length == 0 || target.Length == 0 || ProtocolBox.SelectedItem is not ComboBoxItem selected || selected.Tag is not string protocol)
+        if (SelectedProtocol == "AlibabaTranslate" && (target == "繁體中文" || SelectedSourceLanguage == "繁體中文"))
         {
-            error = "请填写服务名称、模型、目标语言并选择服务类型。";
+            error = "阿里云机器翻译暂不支持所选的繁體中文；请选择其他语言或服务。";
+            return false;
+        }
+        if (name.Length == 0 || target.Length == 0 || ProtocolBox.SelectedItem is not ComboBoxItem selected || selected.Tag is not string protocol ||
+            (!IsMachine(protocol) && model.Length == 0))
+        {
+            error = "请填写服务名称、目标语言，选择服务类型；AI 服务还需填写模型。";
             return false;
         }
         if (baseUrl.Length != 0 && (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri) ||
@@ -347,13 +439,20 @@ public sealed partial class SettingsPage : Page
             error = "两个翻译快捷键不能相同。";
             return false;
         }
-        if (!_hasSavedApiKey && string.IsNullOrWhiteSpace(ApiKeyBox.Password))
+        if ((!CanUseSavedCredential || !_hasSavedApiKey) && string.IsNullOrWhiteSpace(ApiKeyBox.Password))
         {
-            error = "请输入 API Key。";
+            error = "请输入服务凭据。";
             return false;
         }
-        form = new SettingsForm(_profileId, name, protocol, baseUrl, model, ApiKeyBox.Password,
-            _hasSavedApiKey, timeout, Optional(SourceLanguageBox.Text), target, Optional(StyleBox.Text), selection, whole);
+        if (NeedsSecondary(protocol) && (!CanUseSavedCredential || !_hasSavedSecondaryCredential) && string.IsNullOrWhiteSpace(SecondaryKeyBox.Password))
+        {
+            error = "请输入应用密钥。";
+            return false;
+        }
+        form = new SettingsForm(_profileId, name, protocol, baseUrl, IsMachine(protocol) ? "" : model, ApiKeyBox.Password,
+            CanUseSavedCredential && _hasSavedApiKey, timeout, Optional(SelectedSourceLanguage), target,
+            Optional(StyleBox.Text), selection, whole,
+            NeedsSecondary(protocol) ? SecondaryKeyBox.Password : "", CanUseSavedCredential && _hasSavedSecondaryCredential);
         return true;
     }
 
@@ -380,7 +479,8 @@ public sealed partial class SettingsPage : Page
 
     private void UpdateKeyHint()
     {
-        ApiKeyHint.Text = _hasSavedApiKey ? "已保存密钥；留空可继续使用，输入新密钥可替换。" : "密钥会在保存时交由应用安全存储。";
+        ApiKeyHint.Text = CanUseSavedCredential && _hasSavedApiKey ? "已保存凭据；留空可继续使用，输入新值可替换。" : "凭据会在保存时交由应用安全存储。";
+        SecondaryKeyHint.Text = CanUseSavedCredential && _hasSavedSecondaryCredential ? "已保存密钥；留空可继续使用，输入新值可替换。" : "密钥会在保存时交由应用安全存储。";
     }
 
     private async void Apply_Click(object sender, RoutedEventArgs e)

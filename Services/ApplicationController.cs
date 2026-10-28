@@ -121,7 +121,8 @@ internal sealed class ApplicationController : IDisposable
             try { hasKey = !string.IsNullOrWhiteSpace(await _secrets.ReadAsync(profile.CredentialReference)); }
             catch { /* The key can be replaced without overwriting the settings file. */ }
             if (_disposed) return;
-            LoadProfileIntoPage(settings, profile, hasKey);
+            var hasSecondary = await HasSecondaryAsync(profile);
+            LoadProfileIntoPage(settings, profile, hasKey, hasSecondary);
             _initialized = true;
             if (!TryParseHotkey(settings.SelectionHotkey ?? DefaultSelectionHotkey, out var selectionKey) ||
                 !TryParseHotkey(settings.WholeControlHotkey ?? DefaultWholeHotkey, out var wholeKey) ||
@@ -130,7 +131,8 @@ internal sealed class ApplicationController : IDisposable
             else
             {
                 _hasRegisteredHotkeys = true;
-                if (!hasKey) _page.SetStatus("找不到已保存的密钥，请重新输入并保存。", true);
+                if (!hasKey || (RequiresSecondary(profile.Protocol) && !hasSecondary))
+                    _page.SetStatus("找不到已保存的凭据，请重新输入并保存。", true);
             }
             if (_spaceHotkeyUnavailable)
                 _page.SetStatus("连续三次空格快捷键不可用，请使用备用快捷键。", true);
@@ -150,12 +152,19 @@ internal sealed class ApplicationController : IDisposable
             settings.ActiveProviderId);
     }
 
-    private void LoadProfileIntoPage(AppSettings settings, ProviderProfile profile, bool hasKey)
+    private async Task<bool> HasSecondaryAsync(ProviderProfile profile)
+    {
+        if (profile.SecondaryCredentialReference is null) return false;
+        try { return !string.IsNullOrWhiteSpace(await _secrets.ReadAsync(profile.SecondaryCredentialReference)); }
+        catch { return false; }
+    }
+
+    private void LoadProfileIntoPage(AppSettings settings, ProviderProfile profile, bool hasKey, bool hasSecondary)
     {
         _page.LoadSettings(new SettingsForm(profile.Id, profile.Name, profile.Protocol.ToString(),
             profile.BaseUrl, profile.ModelId, "", hasKey, profile.TimeoutSeconds, settings.SourceLanguage,
             settings.TargetLanguage, settings.Style, settings.SelectionHotkey ?? DefaultSelectionHotkey,
-            settings.WholeControlHotkey ?? DefaultWholeHotkey));
+            settings.WholeControlHotkey ?? DefaultWholeHotkey, "", hasSecondary));
         _page.SetProfiles(settings.Providers.Select(p => new ProfileOption(p.Id, p.Name)).ToArray(), profile.Id);
     }
 
@@ -180,8 +189,13 @@ internal sealed class ApplicationController : IDisposable
             var hasKey = false;
             try { hasKey = !string.IsNullOrWhiteSpace(await _secrets.ReadAsync(profile.CredentialReference)); }
             catch { }
-            LoadProfileIntoPage(next, profile, hasKey);
-            return new(true, hasKey ? "已切换服务。" : "已切换服务；未找到密钥，请重新输入并保存。");
+            var hasSecondary = await HasSecondaryAsync(profile);
+            LoadProfileIntoPage(next, profile, hasKey, hasSecondary);
+            var message = hasKey && (!RequiresSecondary(profile.Protocol) || hasSecondary)
+                ? "已切换服务。" : "已切换服务；未找到凭据，请重新输入并保存。";
+            if (IsMachine(profile.Protocol))
+                message += "全局源语言和目标语言可能不受该服务支持，请检查并在需要时调整后保存。";
+            return new(true, message);
         }
         catch { return new(false, "切换服务失败，原设置仍然有效。"); }
         finally { _saving = false; }
@@ -231,11 +245,13 @@ internal sealed class ApplicationController : IDisposable
             if (_disposed) return new(false, "应用正在退出。");
             _settings = next;
             try { await _secrets.DeleteAsync(profile.CredentialReference); } catch { }
+            if (profile.SecondaryCredentialReference is not null)
+                try { await _secrets.DeleteAsync(profile.SecondaryCredentialReference); } catch { }
             var nextActive = remaining.FirstOrDefault(p => p.Id == next.ActiveProviderId) ?? remaining[0];
             var hasKey = false;
             try { hasKey = !string.IsNullOrWhiteSpace(await _secrets.ReadAsync(nextActive.CredentialReference)); }
             catch { }
-            LoadProfileIntoPage(next, nextActive, hasKey);
+            LoadProfileIntoPage(next, nextActive, hasKey, await HasSecondaryAsync(nextActive));
             return new(true, "已删除服务配置。");
         }
         catch { return new(false, "删除服务失败，原设置仍然有效。"); }
@@ -253,25 +269,40 @@ internal sealed class ApplicationController : IDisposable
         _saving = true;
         Invalidate();
         string? newReference = null;
+        string? newSecondaryReference = null;
         var oldSelection = _settings?.SelectionHotkey ?? DefaultSelectionHotkey;
         var oldWhole = _settings?.WholeControlHotkey ?? DefaultWholeHotkey;
         var hadOldHotkeys = _hasRegisteredHotkeys;
         try
         {
             var previous = _settings?.Providers.FirstOrDefault(p => p.Id == form.ProfileId);
-            var previousReference = previous?.CredentialReference;
+            var sameProtocol = previous?.Protocol == profile!.Protocol;
             var key = form.ApiKey;
-            if (string.IsNullOrWhiteSpace(key) && previous is not null)
-                key = await _secrets.ReadAsync(previous.CredentialReference) ?? "";
-            if (string.IsNullOrWhiteSpace(key)) return new(false, "请输入 API Key。");
+            var secondary = form.SecondaryCredential;
+            if (string.IsNullOrWhiteSpace(key) && sameProtocol)
+                key = await _secrets.ReadAsync(previous!.CredentialReference) ?? "";
+            if (RequiresSecondary(profile.Protocol) && string.IsNullOrWhiteSpace(secondary) && sameProtocol && previous!.SecondaryCredentialReference is not null)
+                secondary = await _secrets.ReadAsync(previous.SecondaryCredentialReference) ?? "";
+            if (string.IsNullOrWhiteSpace(key) || (RequiresSecondary(profile.Protocol) && string.IsNullOrWhiteSpace(secondary)))
+                return new(false, "请输入完整的服务凭据。");
             if (!string.IsNullOrWhiteSpace(form.ApiKey))
             {
                 newReference = Guid.NewGuid().ToString("N");
-                profile = profile! with { CredentialReference = newReference };
+                profile = profile with { CredentialReference = newReference };
             }
-            else if (previous is not null) profile = profile! with { CredentialReference = previous.CredentialReference };
-            _ = await Task.Run(() => TranslationProviderFactory.Create(profile!, key));
+            else profile = profile with { CredentialReference = previous!.CredentialReference };
+            if (RequiresSecondary(profile.Protocol))
+            {
+                if (!string.IsNullOrWhiteSpace(form.SecondaryCredential))
+                {
+                    newSecondaryReference = Guid.NewGuid().ToString("N");
+                    profile = profile with { SecondaryCredentialReference = newSecondaryReference };
+                }
+                else profile = profile with { SecondaryCredentialReference = previous!.SecondaryCredentialReference };
+            }
+            _ = await Task.Run(() => TranslationProviderFactory.Create(profile, key, secondary));
             if (newReference is not null) await _secrets.WriteAsync(newReference, key);
+            if (newSecondaryReference is not null) await _secrets.WriteAsync(newSecondaryReference, secondary);
             if (_disposed) return new(false, "应用正在退出。");
             var registration = _hotkeys.ConfigurePair(selection!, whole!);
             _hasRegisteredHotkeys = registration.Success;
@@ -288,11 +319,15 @@ internal sealed class ApplicationController : IDisposable
             }
             _settings = next;
             RefreshProfileList();
-            if (newReference is not null && previousReference is not null)
+            if (previous is not null)
             {
-                try { await _secrets.DeleteAsync(previousReference); } catch { /* Orphaned encrypted key is harmless. */ }
+                if (previous.CredentialReference != profile.CredentialReference)
+                    try { await _secrets.DeleteAsync(previous.CredentialReference); } catch { }
+                if (previous.SecondaryCredentialReference is not null && previous.SecondaryCredentialReference != profile.SecondaryCredentialReference)
+                    try { await _secrets.DeleteAsync(previous.SecondaryCredentialReference); } catch { }
             }
             newReference = null;
+            newSecondaryReference = null;
             return new(true, registration.Success
                 ? "设置已保存。连接测试需要手动触发。"
                 : "设置已保存；备用快捷键被占用，但仍可使用连续三次空格。");
@@ -303,6 +338,10 @@ internal sealed class ApplicationController : IDisposable
             if (newReference is not null)
             {
                 try { await _secrets.DeleteAsync(newReference); } catch { }
+            }
+            if (newSecondaryReference is not null)
+            {
+                try { await _secrets.DeleteAsync(newSecondaryReference); } catch { }
             }
             _saving = false;
         }
@@ -317,17 +356,19 @@ internal sealed class ApplicationController : IDisposable
         try
         {
             var key = form.ApiKey;
-            if (string.IsNullOrWhiteSpace(key))
-            {
-                var previous = _settings?.Providers.FirstOrDefault(p => p.Id == form.ProfileId);
-                if (previous is not null) key = await _secrets.ReadAsync(previous.CredentialReference) ?? "";
-            }
-            if (string.IsNullOrWhiteSpace(key)) return new(false, "请输入 API Key。");
+            var secondary = form.SecondaryCredential;
+            var previous = _settings?.Providers.FirstOrDefault(p => p.Id == form.ProfileId && p.Protocol == profile!.Protocol);
+            if (string.IsNullOrWhiteSpace(key) && previous is not null)
+                key = await _secrets.ReadAsync(previous.CredentialReference) ?? "";
+            if (RequiresSecondary(profile!.Protocol) && string.IsNullOrWhiteSpace(secondary) && previous?.SecondaryCredentialReference is not null)
+                secondary = await _secrets.ReadAsync(previous.SecondaryCredentialReference) ?? "";
+            if (string.IsNullOrWhiteSpace(key) || (RequiresSecondary(profile.Protocol) && string.IsNullOrWhiteSpace(secondary)))
+                return new(false, "请输入完整的服务凭据。");
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(profile!.TimeoutSeconds));
             var result = await Task.Run(async () =>
             {
-                var provider = TranslationProviderFactory.Create(profile, key);
-                return await provider.TranslateAsync(new TranslationRequest("Hello", "简体中文", "English", null), timeout.Token);
+                var provider = TranslationProviderFactory.Create(profile, key, secondary);
+                return await provider.TranslateAsync(new TranslationRequest("你好", "English", "简体中文", null), timeout.Token);
             }).WaitAsync(timeout.Token);
             return result.IsSuccessful ? new(true, "连接测试成功。") : new(false, ResultMessage(result));
         }
@@ -404,8 +445,10 @@ internal sealed class ApplicationController : IDisposable
                 return;
             }
             var key = await _secrets.ReadAsync(profile.CredentialReference, token);
+            var secondary = profile.SecondaryCredentialReference is null ? null : await _secrets.ReadAsync(profile.SecondaryCredentialReference, token);
             if (!IsCurrent(generation, token)) return;
-            if (string.IsNullOrWhiteSpace(key)) { Notify("找不到服务密钥，请在设置中重新保存。", true); return; }
+            if (string.IsNullOrWhiteSpace(key) || (RequiresSecondary(profile.Protocol) && string.IsNullOrWhiteSpace(secondary)))
+            { Notify("找不到服务凭据，请在设置中重新保存。", true); return; }
             _page.SetStatus("正在翻译…");
             var sourceText = capture.Snapshot.SourceText;
             if (action == HotkeyAction.TripleSpace) sourceText = sourceText.TrimEnd(' ');
@@ -422,7 +465,7 @@ internal sealed class ApplicationController : IDisposable
                 {
                     token.ThrowIfCancellationRequested();
                     if (!IsCurrent(generation, token)) throw new OperationCanceledException(token);
-                    return _coordinator.Start(TranslationProviderFactory.Create(profile, key), request, profile, token);
+                    return _coordinator.Start(TranslationProviderFactory.Create(profile, key, secondary), request, profile, token);
                 }
             }, token);
             var result = await operation.Completion;
@@ -528,6 +571,8 @@ internal sealed class ApplicationController : IDisposable
 
     private static string ResultMessage(TranslationResult result) => result.Status switch
     {
+        TranslationStatus.Failed when result.ErrorCode is "unsupported_language" => "该翻译服务不支持所选语言，请更换语言或服务。",
+        TranslationStatus.Failed when result.ErrorCode is "line_break_mismatch" or "incomplete" => "译文结构不完整，未回填。",
         TranslationStatus.TimedOut => "翻译超时，请检查服务配置。",
         TranslationStatus.Truncated => "译文被截断，未回填。",
         TranslationStatus.Refused => "服务拒绝了翻译请求，未回填。",
@@ -535,6 +580,12 @@ internal sealed class ApplicationController : IDisposable
         TranslationStatus.Cancelled => "翻译已取消。",
         _ => "翻译请求失败，请检查服务配置和密钥。"
     };
+
+    private static bool IsMachine(ApiProtocol protocol) => protocol is
+        ApiProtocol.AlibabaTranslate or ApiProtocol.BaiduTranslate or ApiProtocol.YoudaoTranslate or ApiProtocol.DeepLTranslate;
+
+    private static bool RequiresSecondary(ApiProtocol protocol) => protocol is
+        ApiProtocol.AlibabaTranslate or ApiProtocol.BaiduTranslate or ApiProtocol.YoudaoTranslate;
 
     private static bool TryBuildProfile(SettingsForm form, out ProviderProfile? profile, out string? error)
     {
@@ -547,6 +598,10 @@ internal sealed class ApplicationController : IDisposable
             ApiProtocol.OpenAiChatCompletions or ApiProtocol.OpenAiResponses => "https://api.openai.com/v1",
             ApiProtocol.AnthropicMessages => "https://api.anthropic.com",
             ApiProtocol.GeminiGenerateContent => "https://generativelanguage.googleapis.com",
+            ApiProtocol.AlibabaTranslate => "https://mt.cn-hangzhou.aliyuncs.com",
+            ApiProtocol.BaiduTranslate => "https://fanyi-api.baidu.com",
+            ApiProtocol.YoudaoTranslate => "https://openapi.youdao.com",
+            ApiProtocol.DeepLTranslate => "https://api-free.deepl.com",
             _ => ""
         } : form.BaseUrl;
         profile = new ProviderProfile(form.ProfileId, form.Name, protocol, baseUrl, form.ModelId, "pending", form.TimeoutSeconds);

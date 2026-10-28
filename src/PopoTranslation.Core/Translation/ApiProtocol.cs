@@ -5,5 +5,9 @@ public enum ApiProtocol
     OpenAiChatCompletions,
     OpenAiResponses,
     AnthropicMessages,
-    GeminiGenerateContent
+    GeminiGenerateContent,
+    AlibabaTranslate,
+    BaiduTranslate,
+    YoudaoTranslate,
+    DeepLTranslate
 }

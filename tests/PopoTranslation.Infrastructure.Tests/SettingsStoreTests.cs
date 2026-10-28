@@ -67,6 +67,37 @@ public class SettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task MachineProfilesRoundTripReferencesWithoutRequiringModel()
+    {
+        var store = new JsonSettingsStore(PathName);
+        var machine = Settings with
+        {
+            Providers = [new("id", "Baidu", ApiProtocol.BaiduTranslate, "https://fanyi-api.baidu.com", "", "primary-ref", 30, "secondary-ref")]
+        };
+        await store.SaveAsync(machine, TestContext.Current.CancellationToken);
+        var loaded = await store.LoadAsync(TestContext.Current.CancellationToken);
+        Assert.Equal("secondary-ref", loaded!.Providers[0].SecondaryCredentialReference);
+        Assert.Equal("", loaded.Providers[0].ModelId);
+        await Assert.ThrowsAsync<InvalidDataException>(() => store.SaveAsync(machine with
+        {
+            Providers = [machine.Providers[0] with { SecondaryCredentialReference = null }]
+        }, TestContext.Current.CancellationToken));
+        var deepl = machine with { Providers = [machine.Providers[0] with { Protocol = ApiProtocol.DeepLTranslate, SecondaryCredentialReference = null }] };
+        await store.SaveAsync(deepl, TestContext.Current.CancellationToken);
+        Assert.Null((await store.LoadAsync(TestContext.Current.CancellationToken))!.Providers[0].SecondaryCredentialReference);
+    }
+
+    [Fact]
+    public async Task OldProfileWithoutSecondaryReferenceRemainsReadable()
+    {
+        Directory.CreateDirectory(_directory);
+        await File.WriteAllTextAsync(PathName, "{\"SchemaVersion\":1,\"Providers\":[{\"Id\":\"id\",\"Name\":\"name\",\"Protocol\":\"OpenAiResponses\",\"BaseUrl\":\"https://example.com/v1\",\"ModelId\":\"model\",\"CredentialReference\":\"old-ref\",\"TimeoutSeconds\":30}],\"ActiveProviderId\":\"id\",\"TargetLanguage\":\"中文\"}", TestContext.Current.CancellationToken);
+        var loaded = await new JsonSettingsStore(PathName).LoadAsync(TestContext.Current.CancellationToken);
+        Assert.Equal("old-ref", loaded!.Providers[0].CredentialReference);
+        Assert.Null(loaded.Providers[0].SecondaryCredentialReference);
+    }
+
+    [Fact]
     public async Task CancelledSavePreservesExistingFile()
     {
         var store = new JsonSettingsStore(PathName);

@@ -89,6 +89,12 @@ public sealed class JsonSettingsStore : ISettingsStore
         }
     }
 
+    private static bool IsMachineTranslation(ApiProtocol protocol) => protocol is
+        ApiProtocol.AlibabaTranslate or ApiProtocol.BaiduTranslate or ApiProtocol.YoudaoTranslate or ApiProtocol.DeepLTranslate;
+
+    private static bool RequiresSecondaryCredential(ApiProtocol protocol) => protocol is
+        ApiProtocol.AlibabaTranslate or ApiProtocol.BaiduTranslate or ApiProtocol.YoudaoTranslate;
+
     private static void Validate(AppSettings settings)
     {
         if (settings.SchemaVersion != AppSettings.CurrentSchemaVersion || settings.Providers is null ||
@@ -107,7 +113,9 @@ public sealed class JsonSettingsStore : ISettingsStore
                 !Uri.TryCreate(profile.BaseUrl, UriKind.Absolute, out var url) ||
                 (url.Scheme != Uri.UriSchemeHttp && url.Scheme != Uri.UriSchemeHttps) ||
                 !string.IsNullOrEmpty(url.UserInfo) || !string.IsNullOrEmpty(url.Query) || !string.IsNullOrEmpty(url.Fragment) ||
-                string.IsNullOrWhiteSpace(profile.ModelId) || string.IsNullOrWhiteSpace(profile.CredentialReference) ||
+                (!IsMachineTranslation(profile.Protocol) && string.IsNullOrWhiteSpace(profile.ModelId)) ||
+                string.IsNullOrWhiteSpace(profile.CredentialReference) ||
+                (RequiresSecondaryCredential(profile.Protocol) && string.IsNullOrWhiteSpace(profile.SecondaryCredentialReference)) ||
                 profile.TimeoutSeconds is <= 0 or > 86400)
                 throw new InvalidDataException("A provider has invalid or missing fields.");
         }
