@@ -36,6 +36,7 @@ public sealed partial class SettingsPage : Page
     private bool _updatingProfiles;
     private string? _selectedProfileId;
     private Draft? _baseline;
+    private ComboBoxItem? _savedTargetLanguageItem;
 
     private sealed record Draft(string Name, string Protocol, string BaseUrl, string ModelId, string Timeout,
         string SourceLanguage, string TargetLanguage, string Style, string SelectionHotkey, string WholeControlHotkey);
@@ -76,7 +77,7 @@ public sealed partial class SettingsPage : Page
         UpdateKeyHint();
         TimeoutBox.Text = settings.TimeoutSeconds.ToString();
         SourceLanguageBox.Text = settings.SourceLanguage ?? string.Empty;
-        TargetLanguageBox.Text = settings.TargetLanguage;
+        SelectTargetLanguage(settings.TargetLanguage);
         StyleBox.Text = settings.Style ?? string.Empty;
         SelectionHotkeyBox.Text = settings.SelectionHotkey;
         WholeHotkeyBox.Text = settings.WholeControlHotkey;
@@ -104,10 +105,31 @@ public sealed partial class SettingsPage : Page
             .FirstOrDefault(item => string.Equals(item.Tag as string, id, StringComparison.Ordinal));
     }
 
+    private void SelectTargetLanguage(string language)
+    {
+        if (_savedTargetLanguageItem is not null)
+        {
+            TargetLanguageBox.Items.Remove(_savedTargetLanguageItem);
+            _savedTargetLanguageItem = null;
+        }
+
+        var selected = TargetLanguageBox.Items.OfType<ComboBoxItem>()
+            .FirstOrDefault(item => string.Equals(item.Tag as string, language, StringComparison.Ordinal));
+        if (selected is null && !string.IsNullOrWhiteSpace(language))
+        {
+            // Keep a previously saved free-form language available without changing its value.
+            selected = _savedTargetLanguageItem = new ComboBoxItem { Content = $"{language}（已保存）", Tag = language };
+            TargetLanguageBox.Items.Add(selected);
+        }
+        TargetLanguageBox.SelectedItem = selected;
+    }
+
+    private string SelectedTargetLanguage => (TargetLanguageBox.SelectedItem as ComboBoxItem)?.Tag as string ?? string.Empty;
+
     private Draft CaptureForm() => new(
         NameBox.Text, (ProtocolBox.SelectedItem as ComboBoxItem)?.Tag as string ?? string.Empty,
         BaseUrlBox.Text, ModelBox.Text, TimeoutBox.Text, SourceLanguageBox.Text,
-        TargetLanguageBox.Text, StyleBox.Text, SelectionHotkeyBox.Text, WholeHotkeyBox.Text);
+        SelectedTargetLanguage, StyleBox.Text, SelectionHotkeyBox.Text, WholeHotkeyBox.Text);
 
     private bool HasUnsavedChanges()
     {
@@ -296,7 +318,7 @@ public sealed partial class SettingsPage : Page
         var name = NameBox.Text.Trim();
         var baseUrl = BaseUrlBox.Text.Trim();
         var model = ModelBox.Text.Trim();
-        var target = TargetLanguageBox.Text.Trim();
+        var target = SelectedTargetLanguage;
         if (name.Length == 0 || model.Length == 0 || target.Length == 0 || ProtocolBox.SelectedItem is not ComboBoxItem selected || selected.Tag is not string protocol)
         {
             error = "请填写服务名称、模型、目标语言并选择服务类型。";

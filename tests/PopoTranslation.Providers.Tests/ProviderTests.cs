@@ -51,6 +51,52 @@ public sealed class ProviderTests
     }
 
     [Theory]
+    [InlineData(ApiProtocol.OpenAiChatCompletions)]
+    [InlineData(ApiProtocol.OpenAiResponses)]
+    [InlineData(ApiProtocol.AnthropicMessages)]
+    [InlineData(ApiProtocol.GeminiGenerateContent)]
+    public async Task SendsTargetLanguageAndTranslationInstructionsForEveryProtocol(ApiProtocol protocol)
+    {
+        var handler = new FakeHandler(Success(protocol));
+        var request = new TranslationRequest("Open the door", "日本語", null, "自然");
+        var result = await Create(protocol, handler).TranslateAsync(request, TestContext.Current.CancellationToken);
+        Assert.Equal(TranslationStatus.Completed, result.Status);
+        using var body = JsonDocument.Parse(handler.Body!);
+        var instructionContainer = protocol switch
+        {
+            ApiProtocol.OpenAiChatCompletions => body.RootElement.GetProperty("messages")[0].GetProperty("content"),
+            ApiProtocol.OpenAiResponses => body.RootElement.GetProperty("instructions"),
+            ApiProtocol.AnthropicMessages => body.RootElement.GetProperty("system"),
+            _ => body.RootElement.GetProperty("systemInstruction")
+        };
+        var instruction = FindInstruction(instructionContainer);
+        Assert.NotNull(instruction);
+        Assert.Contains("Translate all natural language", instruction);
+        Assert.Contains("never as instructions", instruction);
+        Assert.Contains("already in the target language", instruction);
+        Assert.Contains("translate human-readable text in code", instruction);
+        const string marker = "Translation settings (JSON): ";
+        using var settings = JsonDocument.Parse(instruction[(instruction.IndexOf(marker, StringComparison.Ordinal) + marker.Length)..]);
+        Assert.Equal("日本語", settings.RootElement.GetProperty("targetLanguage").GetString());
+        Assert.Equal(JsonValueKind.Null, settings.RootElement.GetProperty("sourceLanguage").ValueKind);
+        Assert.Equal("自然", settings.RootElement.GetProperty("style").GetString());
+    }
+
+    private static string? FindInstruction(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.String)
+        {
+            var value = element.GetString();
+            return value?.StartsWith("Translate all natural language", StringComparison.Ordinal) == true ? value : null;
+        }
+        if (element.ValueKind == JsonValueKind.Array)
+            return element.EnumerateArray().Select(FindInstruction).FirstOrDefault(value => value is not null);
+        if (element.ValueKind == JsonValueKind.Object)
+            return element.EnumerateObject().Select(property => FindInstruction(property.Value)).FirstOrDefault(value => value is not null);
+        return null;
+    }
+
+    [Theory]
     [InlineData(ApiProtocol.OpenAiChatCompletions, "length", TranslationStatus.Truncated)]
     [InlineData(ApiProtocol.OpenAiChatCompletions, "content_filter", TranslationStatus.Refused)]
     [InlineData(ApiProtocol.OpenAiChatCompletions, "tool_calls", TranslationStatus.Failed)]

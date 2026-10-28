@@ -25,11 +25,12 @@ public sealed class ClipboardService : IDisposable
         _worker.Invoke(() => CaptureCoreAsync(expectedForeground, selectAll, terminalCopy, cancellationToken),
             cancellationToken);
 
-    public bool Paste(nint expectedForeground, string text, bool selectAll, bool terminal = false)
+    public bool Paste(nint expectedForeground, string text, bool selectAll, bool terminal = false,
+        CancellationToken cancellationToken = default, Func<bool>? isCurrent = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(text);
         if (terminal) return false;
-        return _worker.Invoke(() => PasteCoreAsync(expectedForeground, text, selectAll));
+        return _worker.Invoke(() => PasteCoreAsync(expectedForeground, text, selectAll, cancellationToken, isCurrent), cancellationToken);
     }
 
     private static async Task<ClipboardCaptureResult> CaptureCoreAsync(nint expectedForeground, bool selectAll,
@@ -72,6 +73,11 @@ public sealed class ClipboardService : IDisposable
             cancellationToken.ThrowIfCancellationRequested();
             if (GetForegroundWindow() != expectedForeground)
                 return new(ClipboardCaptureStatus.Unavailable, Reason: "目标窗口已失去焦点。");
+            if (KeyboardSimulator.AreModifiersDown() || KeyboardSimulator.IsSpaceDown())
+            {
+                DiagnosticLog.Write("event=clipboard-result status=keys-held");
+                return new(ClipboardCaptureStatus.Unavailable, Reason: "快捷键仍被按住。");
+            }
             FocusDiagnostics.Record("before-copy");
             var sent = terminalCopy ? KeyboardSimulator.SendTerminalCopy() : KeyboardSimulator.SendCopy();
             DiagnosticLog.Write($"event=send-copy success={sent} foreground={GetForegroundWindow()} spaceDown={KeyboardSimulator.IsSpaceDown()} modifiersDown={KeyboardSimulator.AreModifiersDown()}");
@@ -113,23 +119,32 @@ public sealed class ClipboardService : IDisposable
         }
     }
 
-    private static async Task<bool> PasteCoreAsync(nint expectedForeground, string text, bool selectAll)
+    private static async Task<bool> PasteCoreAsync(nint expectedForeground, string text, bool selectAll,
+        CancellationToken cancellationToken, Func<bool>? isCurrent)
     {
+        DiagnosticLog.Write($"event=paste-start selectAll={selectAll} foregroundMatches={GetForegroundWindow() == expectedForeground}");
+        cancellationToken.ThrowIfCancellationRequested();
         if (GetForegroundWindow() != expectedForeground) return false;
-        if (!TryReadClipboard(out var oldData, out _)) return false;
-        if (!await TrySetTextAsync(text, CancellationToken.None)) return false;
+        if (!TryReadClipboard(out var oldData, out _)) { DiagnosticLog.Write("event=paste-result stage=read-clipboard"); return false; }
+        if (!await TrySetTextAsync(text, cancellationToken)) { DiagnosticLog.Write("event=paste-result stage=set-clipboard"); return false; }
         try
         {
-            if (!await WaitForShortcutKeysReleasedAsync(CancellationToken.None)) return false;
-            if (GetForegroundWindow() != expectedForeground) return false;
+            if (!await WaitForShortcutKeysReleasedAsync(cancellationToken)) { DiagnosticLog.Write("event=paste-result stage=keys-held"); return false; }
+            cancellationToken.ThrowIfCancellationRequested();
+            if (GetForegroundWindow() != expectedForeground) { DiagnosticLog.Write("event=paste-result stage=focus"); return false; }
+            if (isCurrent is not null && !isCurrent()) { DiagnosticLog.Write("event=paste-result stage=stale"); return false; }
             if (selectAll)
             {
-                if (!KeyboardSimulator.SendSelectAll()) return false;
-                await Task.Delay(40);
+                if (!KeyboardSimulator.SendSelectAll()) { DiagnosticLog.Write("event=paste-result stage=select-all"); return false; }
+                await Task.Delay(40, cancellationToken);
             }
-            if (GetForegroundWindow() != expectedForeground) return false;
-            if (!KeyboardSimulator.SendPaste()) return false;
-            // Give the target a chance to consume the paste before restoring the old data.
+            cancellationToken.ThrowIfCancellationRequested();
+            if (GetForegroundWindow() != expectedForeground) { DiagnosticLog.Write("event=paste-result stage=focus"); return false; }
+            if (KeyboardSimulator.AreModifiersDown() || KeyboardSimulator.IsSpaceDown()) { DiagnosticLog.Write("event=paste-result stage=keys-held"); return false; }
+            if (isCurrent is not null && !isCurrent()) { DiagnosticLog.Write("event=paste-result stage=stale"); return false; }
+            if (!KeyboardSimulator.SendPaste()) { DiagnosticLog.Write("event=paste-result stage=send"); return false; }
+            DiagnosticLog.Write("event=paste-result stage=submitted");
+            // After submission always finish restoration; cancellation cannot undo a sent paste.
             await Task.Delay(1200);
             return true;
         }
@@ -176,11 +191,11 @@ public sealed class ClipboardService : IDisposable
             if (!KeyboardSimulator.AreModifiersDown() && !KeyboardSimulator.IsSpaceDown())
             {
                 await Task.Delay(60, cancellationToken);
-                return true;
+                if (!KeyboardSimulator.AreModifiersDown() && !KeyboardSimulator.IsSpaceDown()) return true;
             }
             await Task.Delay(10, cancellationToken);
         }
-        return !KeyboardSimulator.AreModifiersDown() && !KeyboardSimulator.IsSpaceDown();
+        return false;
     }
 
     private static bool TryGetText(out string text)

@@ -43,8 +43,19 @@
                             </StackPanel>
                             <TextBox x:Name="SourceLanguageBox" Header="源语言" PlaceholderText="自动识别（留空）"
                                      AutomationProperties.Name="源语言，留空自动识别" />
-                            <TextBox x:Name="TargetLanguageBox" Header="目标语言" PlaceholderText="例如：简体中文、English"
-                                     AutomationProperties.Name="目标语言" />
+                            <ComboBox x:Name="TargetLanguageBox" Header="目标语言" HorizontalAlignment="Stretch"
+                                      AutomationProperties.Name="目标语言">
+                                <ComboBoxItem Content="简体中文" Tag="简体中文" />
+                                <ComboBoxItem Content="繁體中文" Tag="繁體中文" />
+                                <ComboBoxItem Content="English" Tag="English" />
+                                <ComboBoxItem Content="日本語" Tag="日本語" />
+                                <ComboBoxItem Content="한국어" Tag="한국어" />
+                                <ComboBoxItem Content="Français" Tag="Français" />
+                                <ComboBoxItem Content="Deutsch" Tag="Deutsch" />
+                                <ComboBoxItem Content="Español" Tag="Español" />
+                                <ComboBoxItem Content="Português" Tag="Português" />
+                                <ComboBoxItem Content="Русский" Tag="Русский" />
+                            </ComboBox>
                             <TextBox x:Name="StyleBox" Header="翻译风格（可选）" PlaceholderText="例如：自然、简洁"
                                      AutomationProperties.Name="翻译风格" />
                             <TextBox x:Name="SelectionHotkeyBox" Header="选区翻译（备用快捷键）" PlaceholderText="例如：Ctrl+Alt+F9"

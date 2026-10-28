@@ -45,5 +45,5 @@ public interface IFocusedEditor
     Task<CaptureResult> CaptureAsync(CaptureMode mode, nint expectedForegroundHwnd, CancellationToken cancellationToken = default);
     Task<ReplacementResult> ReplaceAsync(EditorSnapshot snapshot, string translatedText,
         Func<Func<ReplacementResult>, ReplacementResult> executeIfCurrent,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default, Func<bool>? isCurrent = null);
 }

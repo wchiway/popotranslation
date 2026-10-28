@@ -432,7 +432,7 @@ internal sealed class ApplicationController : IDisposable
                 return _coordinator.TryExecuteIfCurrent(operation, () =>
                     IsCurrent(generation, token) ? action() : new ReplacementResult(ReplacementStatus.ManualApply), out var value)
                     ? value : new ReplacementResult(ReplacementStatus.ManualApply);
-            }, token);
+            }, token, () => IsCurrent(generation, token));
             if (!IsCurrent(generation, token)) return;
             if (replacement.Status == ReplacementStatus.Applied)
                 Notify("译文已回填。");

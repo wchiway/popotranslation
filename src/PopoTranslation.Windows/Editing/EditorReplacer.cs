@@ -14,7 +14,7 @@ public interface IReplacementBackend
 public static class EditorReplacer
 {
     public static ReplacementResult Replace(EditorSnapshot snapshot, string translatedText,
-        IReplacementBackend backend, CancellationToken cancellationToken = default)
+        IReplacementBackend backend, CancellationToken cancellationToken = default, Func<bool>? isCurrent = null)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentNullException.ThrowIfNull(translatedText);
@@ -31,6 +31,8 @@ public static class EditorReplacer
             if (current is null || !EditorSnapshotValidator.Matches(snapshot, current))
                 return new(ReplacementStatus.ManualApply, "焦点、文本、选区或控件能力已变化。");
             cancellationToken.ThrowIfCancellationRequested();
+            if (isCurrent is not null && !isCurrent())
+                return new(ReplacementStatus.ManualApply, "翻译任务已失效。");
             submitted = true;
             backend.SetValue(translatedText);
             try

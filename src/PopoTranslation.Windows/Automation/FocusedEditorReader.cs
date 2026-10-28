@@ -86,7 +86,7 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
     // The caller must synchronously execute the callback only while the task is current.
     public async Task<ReplacementResult> ReplaceAsync(EditorSnapshot snapshot, string translatedText,
         Func<Func<ReplacementResult>, ReplacementResult> executeIfCurrent,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, Func<bool>? isCurrent = null)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentNullException.ThrowIfNull(translatedText);
@@ -94,8 +94,8 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
         if (snapshot.TargetKind == TargetKind.Terminal)
             return new(ReplacementStatus.ManualApply, "终端内容不会被自动替换，请复制译文后手动粘贴。");
         IReplacementBackend backend = snapshot.Method == CaptureMethod.Clipboard || snapshot.Mode == CaptureMode.Selection
-            ? new ClipboardReplacementBackend(snapshot, _clipboard)
-            : new NativeReplacementBackend(snapshot, _clipboard);
+            ? new ClipboardReplacementBackend(snapshot, _clipboard, cancellationToken, isCurrent)
+            : new NativeReplacementBackend(snapshot, _clipboard, cancellationToken, isCurrent);
         try
         {
             var (accepted, result) = await _worker.InvokeAsync(() =>
@@ -104,13 +104,19 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
                 return executeIfCurrent(() =>
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    return EditorReplacer.Replace(snapshot, translatedText, backend, cancellationToken);
+                    return EditorReplacer.Replace(snapshot, translatedText, backend, cancellationToken, isCurrent);
                 });
             }, cancellationToken, waitForCompletion: true);
-            return accepted ? result! : new(ReplacementStatus.ManualApply, "辅助功能线程繁忙，请手动应用。");
+            var replacement = accepted ? result! : new(ReplacementStatus.ManualApply, "辅助功能线程繁忙，请手动应用。");
+            DiagnosticLog.Write($"event=replace-result method={snapshot.Method} mode={snapshot.Mode} status={replacement.Status}");
+            return replacement;
         }
-        catch (OperationCanceledException) { throw; }
-        catch { return new(ReplacementStatus.ManualApply, "无法验证任务状态，请手动应用。"); }
+        catch (OperationCanceledException) { DiagnosticLog.Write("event=replace-cancelled"); throw; }
+        catch (Exception error)
+        {
+            DiagnosticLog.Write($"event=replace-exception type={error.GetType().Name} hresult={error.HResult:X8}");
+            return new(ReplacementStatus.ManualApply, "无法验证任务状态，请手动应用。");
+        }
     }
 
     private static CaptureResult CaptureStable(CaptureMode mode, nint expectedForegroundHwnd,
@@ -220,7 +226,7 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
             string.Join(",", runtimeId), full, selectionStart, selectionEnd, mode));
     }
 
-    private sealed class NativeReplacementBackend(EditorSnapshot snapshot, ClipboardService clipboard) : IReplacementBackend
+    private sealed class NativeReplacementBackend(EditorSnapshot snapshot, ClipboardService clipboard, CancellationToken cancellationToken, Func<bool>? isCurrent) : IReplacementBackend
     {
         private ValuePattern? _value;
         private EditorSnapshot? _before;
@@ -271,7 +277,7 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
                 return;
             }
             _usedClipboard = true;
-            if (!clipboard.Paste(snapshot.WindowHandle, text, snapshot.Mode == CaptureMode.WholeControl))
+            if (!clipboard.Paste(snapshot.WindowHandle, text, snapshot.Mode == CaptureMode.WholeControl, cancellationToken: cancellationToken, isCurrent: isCurrent))
                 throw new InvalidOperationException("无法提交剪贴板粘贴。");
         }
 
@@ -296,7 +302,7 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
             value.Replace("\r\n", "\n").TrimEnd('\r', '\n');
     }
 
-    private sealed class ClipboardReplacementBackend(EditorSnapshot snapshot, ClipboardService clipboard) : IReplacementBackend
+    private sealed class ClipboardReplacementBackend(EditorSnapshot snapshot, ClipboardService clipboard, CancellationToken cancellationToken, Func<bool>? isCurrent) : IReplacementBackend
     {
         private bool _pasted;
         public bool SupportsSelection => true;
@@ -308,15 +314,21 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
             GetWindowThreadProcessId(snapshot.WindowHandle, out var processId);
             if ((int)processId != snapshot.ProcessId) return null;
             var current = clipboard.Capture(snapshot.WindowHandle,
-                selectAll: snapshot.Mode == CaptureMode.WholeControl);
-            if (current.Status != ClipboardCaptureStatus.Captured || current.Text is null) return null;
+                selectAll: snapshot.Mode == CaptureMode.WholeControl, cancellationToken: cancellationToken);
+            if (current.Status != ClipboardCaptureStatus.Captured || current.Text is null)
+            {
+                DiagnosticLog.Write($"event=replace-observe status=capture-failed captureStatus={current.Status}");
+                return null;
+            }
             var expected = snapshot.Mode == CaptureMode.Selection ? snapshot.SourceText : snapshot.DocumentText;
-            return current.Text == expected ? snapshot : null;
+            var matches = current.Text == expected;
+            DiagnosticLog.Write($"event=replace-observe status={(matches ? "matched" : "text-changed")}");
+            return matches ? snapshot : null;
         }
 
         public void SetValue(string text)
         {
-            _pasted = clipboard.Paste(snapshot.WindowHandle, text, snapshot.Mode == CaptureMode.WholeControl);
+            _pasted = clipboard.Paste(snapshot.WindowHandle, text, snapshot.Mode == CaptureMode.WholeControl, cancellationToken: cancellationToken, isCurrent: isCurrent);
             if (!_pasted) throw new InvalidOperationException("无法提交剪贴板粘贴。");
         }
 

@@ -42,6 +42,11 @@ using (var cancelledDuringObservation = new CancellationTokenSource())
     backend.OnObserve = null;
     Check(backend.Writes == 0, "最终验证期间取消不可写入");
 }
+var taskCurrent = true;
+backend.OnObserve = () => taskCurrent = false;
+Check(EditorReplacer.Replace(whole, "译文", backend, isCurrent: () => taskCurrent).Status == ReplacementStatus.ManualApply && backend.Writes == 0,
+    "最终观察期间任务失效不可写入");
+backend.OnObserve = null;
 Check(EditorReplacer.Replace(whole, "译文\n后续", backend).Status == ReplacementStatus.ManualApply && backend.Writes == 0,
     "多行译文不可写入单行框");
 var flexible = new FakeReplacementBackend { Current = snapshot, SupportsSelection = true, SupportsMultiline = true };
