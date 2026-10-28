@@ -13,6 +13,7 @@ public sealed record ClipboardCaptureResult(ClipboardCaptureStatus Status, strin
 public sealed class ClipboardService : IDisposable
 {
     private const string SentinelPrefix = "PopoTranslation.";
+    private const string ExcludeFromClipboardMonitor = "ExcludeClipboardContentFromMonitorProcessing";
     private readonly StaWorker _worker = new();
 
     public Task<ClipboardCaptureResult> CaptureAsync(nint expectedForeground, bool selectAll,
@@ -174,7 +175,11 @@ public sealed class ClipboardService : IDisposable
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                System.Windows.Clipboard.SetText(text);
+                var data = new System.Windows.DataObject();
+                data.SetText(text);
+                // Windows ignores all formats in this item when this registered format is present.
+                data.SetData(ExcludeFromClipboardMonitor, new System.IO.MemoryStream(new byte[] { 1 }), autoConvert: false);
+                System.Windows.Clipboard.SetDataObject(data, copy: true);
                 return true;
             }
             catch { await Task.Delay(40, cancellationToken); }
