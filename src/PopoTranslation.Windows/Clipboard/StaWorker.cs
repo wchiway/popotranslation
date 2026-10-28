@@ -1,64 +1,92 @@
-using System.Collections.Concurrent;
+using System.Windows.Threading;
 
 namespace PopoTranslation.Windows.Clipboard;
 
-// WPF clipboard APIs require an STA thread. Keeping the worker separate from the
-// UI thread means a clipboard owner that is slow cannot freeze the settings window.
+// Run clipboard operations on a dedicated STA with a message pump so COM and
+// delayed clipboard rendering can dispatch messages while a transaction waits.
 internal sealed class StaWorker : IDisposable
 {
-    private readonly BlockingCollection<Action> _queue = new();
-    private readonly Thread _thread;
-    private int _disposed;
+    private readonly TaskCompletionSource<Dispatcher> _dispatcher = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly SemaphoreSlim _transaction = new(1, 1);
+    private readonly object _sync = new();
+    private bool _disposed;
+    private int _pending;
 
     public StaWorker()
     {
-        _thread = new Thread(Run) { IsBackground = true, Name = "PopoTranslation clipboard" };
-        _thread.SetApartmentState(ApartmentState.STA);
-        _thread.Start();
+        var thread = new Thread(Run) { IsBackground = true, Name = "PopoTranslation clipboard" };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
     }
 
-    public T Invoke<T>(Func<T> action)
+    public T Invoke<T>(Func<Task<T>> action, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(action);
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
-        try
-        {
-            _queue.Add(() =>
-            {
-                try { completion.TrySetResult(action()); }
-                catch (Exception error) { completion.TrySetException(error); }
-            });
-        }
-        catch (InvalidOperationException) { throw new ObjectDisposedException(nameof(StaWorker)); }
-        return completion.Task.GetAwaiter().GetResult();
+        if (_dispatcher.Task.IsCompletedSuccessfully && _dispatcher.Task.Result.CheckAccess())
+            throw new InvalidOperationException("Cannot synchronously invoke the clipboard worker from its own thread.");
+        return InvokeAsync(action, cancellationToken).GetAwaiter().GetResult();
     }
 
-    public async Task<T> InvokeAsync<T>(Func<T> action, CancellationToken cancellationToken)
+    public async Task<T> InvokeAsync<T>(Func<Task<T>> action, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(action);
         cancellationToken.ThrowIfCancellationRequested();
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            _pending++;
+        }
+
         try
         {
-            _queue.Add(() =>
+            await _transaction.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
             {
-                try { completion.TrySetResult(action()); }
-                catch (Exception error) { completion.TrySetException(error); }
-            });
+                var dispatcher = await _dispatcher.Task.ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                return await dispatcher.InvokeAsync(() =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return action();
+                }).Task.Unwrap().ConfigureAwait(false);
+            }
+            finally { _transaction.Release(); }
         }
-        catch (InvalidOperationException) { throw new ObjectDisposedException(nameof(StaWorker)); }
-        return await completion.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        finally
+        {
+            lock (_sync)
+            {
+                _pending--;
+                if (_disposed && _pending == 0) Shutdown();
+            }
+        }
     }
 
     private void Run()
     {
-        foreach (var action in _queue.GetConsumingEnumerable()) action();
+        try
+        {
+            _dispatcher.TrySetResult(Dispatcher.CurrentDispatcher);
+            Dispatcher.Run();
+        }
+        catch (Exception error) { _dispatcher.TrySetException(error); }
+    }
+
+    private void Shutdown()
+    {
+        _ = _dispatcher.Task.ContinueWith(task =>
+        {
+            if (task.Status == TaskStatus.RanToCompletion)
+                task.Result.BeginInvokeShutdown(DispatcherPriority.Background);
+        }, TaskScheduler.Default);
     }
 
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) == 0) _queue.CompleteAdding();
+        lock (_sync)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            if (_pending == 0) Shutdown();
+        }
     }
 }

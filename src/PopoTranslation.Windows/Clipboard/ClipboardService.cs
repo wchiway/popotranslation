@@ -17,21 +17,22 @@ public sealed class ClipboardService : IDisposable
 
     public Task<ClipboardCaptureResult> CaptureAsync(nint expectedForeground, bool selectAll,
         bool terminalCopy, CancellationToken cancellationToken = default) =>
-        _worker.InvokeAsync(() => CaptureCore(expectedForeground, selectAll, terminalCopy, cancellationToken),
+        _worker.InvokeAsync(() => CaptureCoreAsync(expectedForeground, selectAll, terminalCopy, cancellationToken),
             cancellationToken);
 
     public ClipboardCaptureResult Capture(nint expectedForeground, bool selectAll, bool terminalCopy = false,
         CancellationToken cancellationToken = default) =>
-        _worker.Invoke(() => CaptureCore(expectedForeground, selectAll, terminalCopy, cancellationToken));
+        _worker.Invoke(() => CaptureCoreAsync(expectedForeground, selectAll, terminalCopy, cancellationToken),
+            cancellationToken);
 
     public bool Paste(nint expectedForeground, string text, bool selectAll, bool terminal = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(text);
         if (terminal) return false;
-        return _worker.Invoke(() => PasteCore(expectedForeground, text, selectAll));
+        return _worker.Invoke(() => PasteCoreAsync(expectedForeground, text, selectAll));
     }
 
-    private static ClipboardCaptureResult CaptureCore(nint expectedForeground, bool selectAll,
+    private static async Task<ClipboardCaptureResult> CaptureCoreAsync(nint expectedForeground, bool selectAll,
         bool terminalCopy, CancellationToken cancellationToken)
     {
         DiagnosticLog.Write($"event=clipboard-start selectAll={selectAll} terminal={terminalCopy} expected={expectedForeground} foreground={GetForegroundWindow()}");
@@ -48,16 +49,17 @@ public sealed class ClipboardService : IDisposable
         string? restoreIfCurrent = null;
         try
         {
-            if (!TrySetText(sentinel))
+            if (!await TrySetTextAsync(sentinel, cancellationToken))
             {
                 DiagnosticLog.Write("event=clipboard-sentinel-failed");
                 return new(ClipboardCaptureStatus.Unavailable, Reason: "剪贴板正被其他程序占用。");
             }
             restoreIfCurrent = sentinel;
             var sequence = GetClipboardSequenceNumber();
-            var released = KeyboardSimulator.WaitForShortcutKeysReleased(TimeSpan.FromSeconds(1));
+            var released = await WaitForShortcutKeysReleasedAsync(cancellationToken);
             DiagnosticLog.Write($"event=keys-released success={released} spaceDown={KeyboardSimulator.IsSpaceDown()} modifiersDown={KeyboardSimulator.AreModifiersDown()}");
             if (!released) return new(ClipboardCaptureStatus.Unavailable, Reason: "快捷键仍被按住。");
+            cancellationToken.ThrowIfCancellationRequested();
             if (GetForegroundWindow() != expectedForeground)
                 return new(ClipboardCaptureStatus.Unavailable, Reason: "目标窗口已失去焦点。");
             if (selectAll)
@@ -65,8 +67,9 @@ public sealed class ClipboardService : IDisposable
                 var selected = KeyboardSimulator.SendSelectAll();
                 DiagnosticLog.Write($"event=send-select-all success={selected} foreground={GetForegroundWindow()}");
                 if (!selected) return new(ClipboardCaptureStatus.Unavailable, Reason: "无法发送全选按键。");
-                Thread.Sleep(80);
+                await Task.Delay(80, cancellationToken);
             }
+            cancellationToken.ThrowIfCancellationRequested();
             if (GetForegroundWindow() != expectedForeground)
                 return new(ClipboardCaptureStatus.Unavailable, Reason: "目标窗口已失去焦点。");
             FocusDiagnostics.Record("before-copy");
@@ -91,7 +94,7 @@ public sealed class ClipboardService : IDisposable
                     restoreIfCurrent = text;
                     return new(ClipboardCaptureStatus.Captured, text);
                 }
-                Thread.Sleep(20);
+                await Task.Delay(20, cancellationToken);
             }
             DiagnosticLog.Write($"event=clipboard-result status=no-text sequenceChanged={sequenceChanged} foreground={GetForegroundWindow()}");
             FocusDiagnostics.Record("copy-timeout");
@@ -110,24 +113,24 @@ public sealed class ClipboardService : IDisposable
         }
     }
 
-    private static bool PasteCore(nint expectedForeground, string text, bool selectAll)
+    private static async Task<bool> PasteCoreAsync(nint expectedForeground, string text, bool selectAll)
     {
         if (GetForegroundWindow() != expectedForeground) return false;
         if (!TryReadClipboard(out var oldData, out _)) return false;
-        if (!TrySetText(text)) return false;
+        if (!await TrySetTextAsync(text, CancellationToken.None)) return false;
         try
         {
-            if (!KeyboardSimulator.WaitForShortcutKeysReleased(TimeSpan.FromSeconds(1))) return false;
+            if (!await WaitForShortcutKeysReleasedAsync(CancellationToken.None)) return false;
             if (GetForegroundWindow() != expectedForeground) return false;
             if (selectAll)
             {
                 if (!KeyboardSimulator.SendSelectAll()) return false;
-                Thread.Sleep(40);
+                await Task.Delay(40);
             }
             if (GetForegroundWindow() != expectedForeground) return false;
             if (!KeyboardSimulator.SendPaste()) return false;
             // Give the target a chance to consume the paste before restoring the old data.
-            Thread.Sleep(1200);
+            await Task.Delay(1200);
             return true;
         }
         finally { RestoreClipboard(oldData, text); }
@@ -149,18 +152,35 @@ public sealed class ClipboardService : IDisposable
         }
     }
 
-    private static bool TrySetText(string text)
+    private static async Task<bool> TrySetTextAsync(string text, CancellationToken cancellationToken)
     {
         for (var attempt = 0; attempt < 3; attempt++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 System.Windows.Clipboard.SetText(text);
                 return true;
             }
-            catch { Thread.Sleep(40); }
+            catch { await Task.Delay(40, cancellationToken); }
         }
         return false;
+    }
+
+    private static async Task<bool> WaitForShortcutKeysReleasedAsync(CancellationToken cancellationToken)
+    {
+        var deadline = Environment.TickCount64 + 1000;
+        while (Environment.TickCount64 < deadline)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!KeyboardSimulator.AreModifiersDown() && !KeyboardSimulator.IsSpaceDown())
+            {
+                await Task.Delay(60, cancellationToken);
+                return true;
+            }
+            await Task.Delay(10, cancellationToken);
+        }
+        return !KeyboardSimulator.AreModifiersDown() && !KeyboardSimulator.IsSpaceDown();
     }
 
     private static bool TryGetText(out string text)
