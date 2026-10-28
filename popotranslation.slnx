@@ -4,6 +4,18 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
+  <Folder Name="/src/">
+    <Project Path="src/PopoTranslation.Core/PopoTranslation.Core.csproj" />
+    <Project Path="src/PopoTranslation.Infrastructure/PopoTranslation.Infrastructure.csproj" />
+    <Project Path="src/PopoTranslation.Providers/PopoTranslation.Providers.csproj" />
+    <Project Path="src/PopoTranslation.Windows/PopoTranslation.Windows.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PopoTranslation.Core.Tests/PopoTranslation.Core.Tests.csproj" />
+    <Project Path="tests/PopoTranslation.Infrastructure.Tests/PopoTranslation.Infrastructure.Tests.csproj" />
+    <Project Path="tests/PopoTranslation.Providers.Tests/PopoTranslation.Providers.Tests.csproj" />
+    <Project Path="tests/PopoTranslation.Windows.Tests/PopoTranslation.Windows.Tests.csproj" />
+  </Folder>
   <Project Path="popotranslation.csproj">
     <Platform Solution="*|ARM64" Project="ARM64" />
     <Platform Solution="*|x64" Project="x64" />

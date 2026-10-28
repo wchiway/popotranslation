@@ -1,0 +1,63 @@
+# 开发与构建
+
+更新日期：2026-10-28。
+
+## 前置环境
+
+- Windows 11 x64。
+- .NET SDK 10（本项目使用 `net10.0-windows10.0.19041.0`）。
+- Visual Studio 2026（或包含 Windows App SDK / WinUI 组件的兼容构建工具），用于 WinUI XAML 构建。
+- 项目根目录的 `NuGet.Config` 固定使用 `https://api.nuget.org/v3/index.json`，不依赖机器上的 Visual Studio 离线源。
+- 项目使用 Windows App SDK `2.6.4` 和 Windows SDK BuildTools `10.0.26100.4654`，版本写在根项目文件中；升级前应查证兼容性。
+- 根项目设置 `WindowsPackageType=None`，直接运行构建出的 `.exe` 时由 Windows App SDK Bootstrap 初始化运行时；当前开发机可使用已安装的 Windows App Runtime 2.6.4。
+
+## 构建
+
+使用 Visual Studio 的 MSBuild 构建 WinUI 项目：
+
+```powershell
+$msbuild = "D:\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe"
+& $msbuild popotranslation.slnx -restore -target:Build -property:Configuration=Debug -property:Platform=x64
+```
+
+如果 .NET SDK 的 NuGet 缓存所在磁盘空间不足，可以只为当前进程指定缓存目录：
+
+```powershell
+$env:NUGET_PACKAGES = 'D:\popotranslation-nuget\packages'
+$env:NUGET_HTTP_CACHE_PATH = 'D:\popotranslation-nuget\http'
+$env:NUGET_SCRATCH = 'D:\popotranslation-nuget\scratch'
+```
+
+这三个变量只影响当前 PowerShell 进程，不会修改系统环境变量。多个并发构建必须共用同一组缓存和临时目录。
+
+不要直接执行普通的 `dotnet build` 作为 WinUI 的完整验证；WinUI XAML 构建和 MSIX/Windows App SDK targets 可能需要 Visual Studio 提供的 MSBuild。核心类库和测试可以使用 `dotnet test`。
+
+## 运行
+
+在 Visual Studio 中打开 `popotranslation.slnx`，选择 `x64`，启动 `popotranslation` 项目。程序启动后从托盘打开设置，填写服务类型、模型、API Key、目标语言和快捷键，保存后使用快捷键翻译其他应用中的文字。
+
+首次运行前应确保：
+
+- 已保存至少一个服务配置和密钥；没有密钥时不会发起翻译。
+- 快捷键未被其他应用占用；注册冲突会在设置页提示。
+- 输入框是支持的焦点控件。密码框、只读控件、无法确认身份的控件会被拒绝。
+
+## 测试
+
+```powershell
+dotnet test tests/PopoTranslation.Core.Tests/PopoTranslation.Core.Tests.csproj --configuration Debug
+dotnet test tests/PopoTranslation.Infrastructure.Tests/PopoTranslation.Infrastructure.Tests.csproj --configuration Debug
+dotnet test tests/PopoTranslation.Providers.Tests/PopoTranslation.Providers.Tests.csproj --configuration Debug
+dotnet run --project tests/PopoTranslation.Windows.Tests/PopoTranslation.Windows.Tests.csproj --configuration Debug
+```
+
+Providers 测试使用本机模拟 HTTP 传输，不会发送真实 AI 请求。Windows 测试是零 NuGet 依赖的可执行检查，不是 `dotnet test` 项目。自动化测试不能代替真实应用、真实输入法和真实服务连接的验收。
+
+## 当前限制
+
+- 自动回填仅保守支持标准 Win32 单行、可写、非密码 `Edit` 控件；其他控件转手动复制。
+- 选区可以读取，但选区替换仍转手动；多行和富文本控件通常只能读取，不能自动写回。
+- 输入法组合状态无法通用确认；中文输入法、管理员窗口、浏览器、Electron、微信/QQ 等目标需要逐个实测。
+- 托盘通知可能被系统抑制；结果可从设置页的结果区复制。
+- 修改配置与密钥不是跨文件事务；保存失败时不会覆盖旧设置，但极端情况下可能需要重新输入密钥。
+- 没有真实 AI 调用和干净机器发布的自动验收；发布前需按 `docs/release-checklist.md` 人工验证。

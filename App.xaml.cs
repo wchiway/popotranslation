@@ -1,23 +1,6 @@
-﻿using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Controls.Primitives;
-using Microsoft.UI.Xaml.Data;
-using Microsoft.UI.Xaml.Input;
-using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Navigation;
-using Microsoft.UI.Xaml.Shapes;
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Runtime.InteropServices.WindowsRuntime;
-using Windows.ApplicationModel;
-using Windows.ApplicationModel.Activation;
-using Windows.Foundation;
-using Windows.Foundation.Collections;
-
-// To learn more about WinUI, the WinUI project structure,
-// and more about our project templates, see: http://aka.ms/winui-project-info.
+﻿using System;
+using System.Threading;
+using Microsoft.UI.Xaml;
 
 namespace popotranslation
 {
@@ -26,15 +9,53 @@ namespace popotranslation
     /// </summary>
     public partial class App : Application
     {
-        private Window? _window;
+        private const string InstanceMutexName = @"Local\PopoTranslation.SingleInstance";
+        private const string ActivateEventName = @"Local\PopoTranslation.Activate";
+        private Mutex? _instanceMutex;
+        private EventWaitHandle? _activateEvent;
+        private RegisteredWaitHandle? _activateWait;
+        private MainWindow? _window;
+        private bool _isPrimary;
 
         /// <summary>
-        /// Initializes the singleton application object.  This is the first line of authored code
+        /// Initializes the singleton application object. This is the first line of authored code
         /// executed, and as such is the logical equivalent of main() or WinMain().
         /// </summary>
         public App()
         {
             InitializeComponent();
+
+            _instanceMutex = new Mutex(initiallyOwned: true, InstanceMutexName, out var createdNew);
+            _isPrimary = createdNew;
+            if (!createdNew)
+            {
+                // A second process only wakes the existing instance and exits below.
+                try
+                {
+                    using var activate = EventWaitHandle.OpenExisting(ActivateEventName);
+                    activate.Set();
+                }
+                catch (WaitHandleCannotBeOpenedException)
+                {
+                    // The owner is exiting; the operating system will release the mutex.
+                }
+                _instanceMutex.Dispose();
+                _instanceMutex = null;
+                return;
+            }
+
+            _activateEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ActivateEventName);
+            _activateWait = ThreadPool.RegisterWaitForSingleObject(
+                _activateEvent,
+                (_, _) =>
+                {
+                    var window = _window;
+                    if (window is null) return;
+                    window.DispatcherQueue.TryEnqueue(window.ShowSettings);
+                },
+                state: null,
+                millisecondsTimeOutInterval: Timeout.Infinite,
+                executeOnlyOnce: false);
         }
 
         /// <summary>
@@ -43,6 +64,12 @@ namespace popotranslation
         /// <param name="args">Details about the launch request and process.</param>
         protected override void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
         {
+            if (!_isPrimary)
+            {
+                Exit();
+                return;
+            }
+
             _window = new MainWindow();
             _window.Activate();
         }

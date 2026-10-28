@@ -1,7 +1,7 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RootNamespace>popotranslation</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
@@ -10,9 +10,15 @@
     <PublishProfile>win-$(Platform).pubxml</PublishProfile>
     <UseWinUI>true</UseWinUI>
     <WinUISDKReferences>false</WinUISDKReferences>
+    <WindowsPackageType>None</WindowsPackageType>
     <EnableMsixTooling>true</EnableMsixTooling>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="src\**\*.cs;tests\**\*.cs" />
+    <None Remove="src\**;tests\**" />
+  </ItemGroup>
 
   <ItemGroup>
     <Content Include="Assets\SplashScreen.scale-200.png" />
@@ -34,7 +40,17 @@
     package has not yet been restored.
   -->
   <ItemGroup Condition="'$(DisableMsixProjectCapabilityAddedByProject)'!='true' and '$(EnableMsixTooling)'=='true'">
-    <ProjectCapability Include="Msix"/>
+    <ProjectCapability Include="Msix" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.6.4" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4654" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="src\PopoTranslation.Core\PopoTranslation.Core.csproj" />
+    <ProjectReference Include="src\PopoTranslation.Infrastructure\PopoTranslation.Infrastructure.csproj" />
+    <ProjectReference Include="src\PopoTranslation.Providers\PopoTranslation.Providers.csproj" />
+    <ProjectReference Include="src\PopoTranslation.Windows\PopoTranslation.Windows.csproj" />
   </ItemGroup>
 
   <!--
@@ -50,7 +66,7 @@
   <PropertyGroup>
     <PublishReadyToRun Condition="'$(Configuration)' == 'Debug'">False</PublishReadyToRun>
     <PublishReadyToRun Condition="'$(Configuration)' != 'Debug'">True</PublishReadyToRun>
-    <PublishTrimmed Condition="'$(Configuration)' == 'Debug'">False</PublishTrimmed>
-    <PublishTrimmed Condition="'$(Configuration)' != 'Debug'">True</PublishTrimmed>
+    <!-- WinUI, XAML and JSON reflection are not trim-safe; do not enable PublishTrimmed. -->
+    <PublishTrimmed>False</PublishTrimmed>
   </PropertyGroup>
 </Project>
