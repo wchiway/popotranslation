@@ -6,7 +6,7 @@ PopoTranslation 是一个使用 C#、.NET 10 和 WinUI 3 构建的 Windows 桌�
 
 - WinUI 3 双栏设置窗口、托盘常驻、单实例运行。
 - 默认识别方式：连续三次空格；同时保留可配置的选区/整框备用快捷键。
-- 多行和富文本文本的读取：优先使用 UI Automation；QQ、微信、Discord、Telegram 等应用在无法暴露可编辑文本控件时使用剪贴板兼容路径。
+- 多行和富文本文本的读取：优先使用 UI Automation；QQ、微信、Discord、Telegram 和记事本等应用在无法暴露可编辑文本控件时使用剪贴板兼容路径。
 - 多行/富文本回填：标准可写 ValuePattern 直接设置；其他社交软件通过剪贴板粘贴；终端只读取选中的文本，不自动改写。
 - 多个 AI 服务配置的新增、切换和删除；密钥使用当前 Windows 用户的 DPAPI 保护。
 - 四种独立协议：OpenAI Chat Completions、OpenAI Responses、Anthropic Messages、Google Gemini 原生 generateContent。

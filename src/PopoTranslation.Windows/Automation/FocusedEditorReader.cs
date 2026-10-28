@@ -22,39 +22,42 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
         var targetKind = TargetApplication.ClassifyWindow(expectedForegroundHwnd);
         if (targetKind == TargetKind.Terminal && mode == CaptureMode.WholeControl)
             return new(CaptureStatus.Unsupported);
+        var allowUnknownPassword = targetKind is TargetKind.Social or TargetKind.TextEditor;
+        CaptureResult uia;
         try
         {
-            var (accepted, uia) = await _worker.InvokeAsync(
-                () => CaptureStable(mode, expectedForegroundHwnd), cancellationToken);
-            if (accepted && uia is not null)
-            {
-                if (uia.Status == CaptureStatus.Captured)
-                    return new(CaptureStatus.Captured, uia.Snapshot! with { TargetKind = targetKind });
-
-                // Never bypass a protected or read-only refusal with clipboard simulation.
-                if (uia.Status is not (CaptureStatus.Protected or CaptureStatus.ReadOnly))
-                {
-                    var clipboard = await TryClipboardCaptureAsync(
-                        mode, expectedForegroundHwnd, targetKind, cancellationToken);
-                    if (clipboard is not null) return clipboard;
-                }
-                return uia;
-            }
-            return new(CaptureStatus.Busy);
+            var (accepted, result) = await _worker.InvokeAsync(
+                () => CaptureStable(mode, expectedForegroundHwnd, allowUnknownPassword), cancellationToken);
+            uia = accepted && result is not null ? result : new(CaptureStatus.Busy);
         }
         catch (OperationCanceledException) { throw; }
-        catch (Exception) { return new(CaptureStatus.Unavailable); }
+        catch { uia = new(CaptureStatus.Unavailable); }
+
+        if (uia.Status == CaptureStatus.Captured)
+            return new(CaptureStatus.Captured, uia.Snapshot! with { TargetKind = targetKind });
+
+        // Never bypass an explicitly protected or read-only refusal with clipboard simulation.
+        if (uia.Status is not (CaptureStatus.Protected or CaptureStatus.ReadOnly))
+        {
+            var (clipboard, reason) = await TryClipboardCaptureAsync(
+                mode, expectedForegroundHwnd, targetKind, cancellationToken);
+            if (clipboard is not null) return clipboard;
+            if (reason is not null) return uia with { Reason = reason };
+        }
+        return uia;
     }
 
-    private async Task<CaptureResult?> TryClipboardCaptureAsync(CaptureMode mode, nint expectedForeground,
-        TargetKind targetKind, CancellationToken cancellationToken)
+    private async Task<(CaptureResult? Result, string? Reason)> TryClipboardCaptureAsync(CaptureMode mode,
+        nint expectedForeground, TargetKind targetKind, CancellationToken cancellationToken)
     {
-        if (targetKind == TargetKind.Standard) return null;
-        if (targetKind == TargetKind.Terminal && mode == CaptureMode.WholeControl) return null;
+        if (targetKind is not (TargetKind.Social or TargetKind.TextEditor or TargetKind.Terminal))
+            return (null, null);
+        if (targetKind == TargetKind.Terminal && mode == CaptureMode.WholeControl) return (null, null);
         var capture = await _clipboard.CaptureAsync(expectedForeground,
             selectAll: mode == CaptureMode.WholeControl, terminalCopy: targetKind == TargetKind.Terminal,
             cancellationToken);
-        if (capture.Status != ClipboardCaptureStatus.Captured || capture.Text is null) return null;
+        if (capture.Status != ClipboardCaptureStatus.Captured || capture.Text is null)
+            return (null, capture.Reason ?? "剪贴板没有取得可翻译的文字。");
 
         var processId = 0;
         var start = 0L;
@@ -70,7 +73,7 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
         var snapshot = new EditorSnapshot(expectedForeground, processId, start, "clipboard",
             capture.Text, 0, mode == CaptureMode.Selection ? capture.Text.Length : 0, mode,
             CaptureMethod.Clipboard, targetKind);
-        return new(CaptureStatus.Captured, snapshot);
+        return (new CaptureResult(CaptureStatus.Captured, snapshot), null);
     }
 
     // The caller must synchronously execute the callback only while the task is current.
@@ -103,29 +106,44 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
         catch { return new(ReplacementStatus.ManualApply, "无法验证任务状态，请手动应用。"); }
     }
 
-    private static CaptureResult CaptureStable(CaptureMode mode, nint expectedForegroundHwnd)
+    private static CaptureResult CaptureStable(CaptureMode mode, nint expectedForegroundHwnd,
+        bool allowUnknownPassword = false)
     {
-        var first = CaptureOnce(mode, expectedForegroundHwnd);
+        var first = CaptureOnce(mode, expectedForegroundHwnd, allowUnknownPassword);
         if (first.Status != CaptureStatus.Captured) return first;
-        var second = CaptureOnce(mode, expectedForegroundHwnd);
+        var second = CaptureOnce(mode, expectedForegroundHwnd, allowUnknownPassword);
         return second.Status == CaptureStatus.Captured &&
                EditorSnapshotValidator.Matches(first.Snapshot!, second.Snapshot!)
             ? second : new(CaptureStatus.Unavailable);
     }
 
-    private static CaptureResult CaptureOnce(CaptureMode mode, nint expectedForegroundHwnd)
+    private static CaptureResult CaptureOnce(CaptureMode mode, nint expectedForegroundHwnd,
+        bool allowUnknownPassword = false)
     {
         var window = GetForegroundWindow();
         if (window == 0 || window != expectedForegroundHwnd) return new(CaptureStatus.NoFocusedEditor);
         var element = AutomationElement.FocusedElement;
         if (element is null) return new(CaptureStatus.NoFocusedEditor);
 
-        // Ignore UIA defaults: an unsupported protected/enabled property is not proof of safety.
-        var passwordProperty = element.GetCurrentPropertyValue(AutomationElement.IsPasswordProperty, true);
-        if (passwordProperty is not bool isPassword || isPassword) return new(CaptureStatus.Protected);
         var enabled = element.GetCurrentPropertyValue(AutomationElement.IsEnabledProperty, true);
         if (enabled is not bool isEnabled || !isEnabled) return new(CaptureStatus.ReadOnly);
         var controlType = element.Current.ControlType;
+
+        // An unsupported property is not proof of safety for ordinary apps. For known
+        // chat input surfaces and text editors, allow the clipboard fallback to handle it.
+        // A custom Pane may report the property as true even though it is a chat input;
+        // only an Edit with an explicit protected flag is treated as a secret field.
+        var passwordProperty = element.GetCurrentPropertyValue(AutomationElement.IsPasswordProperty);
+        if (passwordProperty is bool isPassword)
+        {
+            if (isPassword && (!allowUnknownPassword || controlType == ControlType.Edit))
+                return new(CaptureStatus.Protected,
+                    Reason: $"UIA 将 {controlType.ProgrammaticName} 标记为受保护；请确认焦点在聊天输入框，而不是密码或支付输入框。");
+        }
+        else if (!allowUnknownPassword)
+            return new(CaptureStatus.Protected,
+                Reason: $"UIA 无法确认 {controlType.ProgrammaticName} 是否受保护；请把光标放进聊天输入框后重试。");
+
         if (controlType != ControlType.Edit &&
             !(mode == CaptureMode.Selection && controlType == ControlType.Document))
             return new(CaptureStatus.Unsupported);
@@ -207,14 +225,20 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
         {
             var foreground = GetForegroundWindow();
             if (foreground != snapshot.WindowHandle) return null;
-            var captured = CaptureStable(snapshot.Mode, foreground);
+            var allowUnknownPassword = snapshot.TargetKind is TargetKind.Social or TargetKind.TextEditor;
+            var captured = CaptureStable(snapshot.Mode, foreground, allowUnknownPassword);
             if (captured.Status != CaptureStatus.Captured) return null;
             var element = AutomationElement.FocusedElement;
             if (element is null || string.Join(",", element.GetRuntimeId()) != captured.Snapshot!.ElementRuntimeId)
                 return null;
             if (element.Current.ControlType != ControlType.Edit) return null;
-            var passwordProperty = element.GetCurrentPropertyValue(AutomationElement.IsPasswordProperty, true);
-            if (passwordProperty is not bool isPassword || isPassword) return null;
+            var passwordProperty = element.GetCurrentPropertyValue(AutomationElement.IsPasswordProperty);
+            if (passwordProperty is bool isPassword)
+            {
+                if (isPassword && (snapshot.TargetKind is not (TargetKind.Social or TargetKind.TextEditor) ||
+                    element.Current.ControlType == ControlType.Edit)) return null;
+            }
+            else if (snapshot.TargetKind is not (TargetKind.Social or TargetKind.TextEditor)) return null;
 
             // ValuePattern cannot replace a selection; use clipboard for a selection.
             _value = null;
@@ -223,7 +247,7 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
                 pattern is ValuePattern value && !value.Current.IsReadOnly)
                 _value = value;
 
-            var final = CaptureOnce(snapshot.Mode, foreground);
+            var final = CaptureOnce(snapshot.Mode, foreground, allowUnknownPassword);
             if (final.Status != CaptureStatus.Captured ||
                 !EditorSnapshotValidator.Matches(captured.Snapshot, final.Snapshot!)) return null;
             _before = final.Snapshot;
@@ -245,7 +269,13 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
 
         public bool ConfirmValue(string text)
         {
-            if (_usedClipboard) return false;
+            if (_usedClipboard)
+            {
+                if (snapshot.Mode != CaptureMode.WholeControl || _before is null) return false;
+                var current = clipboard.Capture(_before.WindowHandle, selectAll: true);
+                return current.Status == ClipboardCaptureStatus.Captured && current.Text is not null &&
+                    Normalize(current.Text) == Normalize(text);
+            }
             var element = AutomationElement.FocusedElement;
             return _before is not null && element is not null &&
                 GetForegroundWindow() == _before.WindowHandle &&
@@ -253,10 +283,14 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
                 string.Join(",", element.GetRuntimeId()) == _before.ElementRuntimeId &&
                 _value!.Current.Value == text;
         }
+
+        private static string Normalize(string value) =>
+            value.Replace("\r\n", "\n").TrimEnd('\r', '\n');
     }
 
     private sealed class ClipboardReplacementBackend(EditorSnapshot snapshot, ClipboardService clipboard) : IReplacementBackend
     {
+        private bool _pasted;
         public bool SupportsSelection => true;
         public bool SupportsMultiline => true;
 
@@ -274,12 +308,20 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
 
         public void SetValue(string text)
         {
-            if (!clipboard.Paste(snapshot.WindowHandle, text, snapshot.Mode == CaptureMode.WholeControl))
-                throw new InvalidOperationException("无法提交剪贴板粘贴。");
+            _pasted = clipboard.Paste(snapshot.WindowHandle, text, snapshot.Mode == CaptureMode.WholeControl);
+            if (!_pasted) throw new InvalidOperationException("无法提交剪贴板粘贴。");
         }
 
-        // A generic clipboard paste has no portable acknowledgement from the target app.
-        public bool ConfirmValue(string text) => false;
+        public bool ConfirmValue(string text)
+        {
+            if (!_pasted || snapshot.Mode != CaptureMode.WholeControl) return false;
+            var current = clipboard.Capture(snapshot.WindowHandle, selectAll: true);
+            return current.Status == ClipboardCaptureStatus.Captured && current.Text is not null &&
+                Normalize(current.Text) == Normalize(text);
+        }
+
+        private static string Normalize(string value) =>
+            value.Replace("\r\n", "\n").TrimEnd('\r', '\n');
     }
 
     public void Dispose()

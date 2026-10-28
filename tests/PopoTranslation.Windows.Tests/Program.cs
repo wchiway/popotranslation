@@ -116,7 +116,8 @@ Check(TargetApplication.ClassifyProcessName("Weixin.exe") == TargetKind.Social, 
 Check(TargetApplication.ClassifyProcessName("Discord") == TargetKind.Social, "Discord 应走社交兼容路径");
 Check(TargetApplication.ClassifyProcessName("TelegramDesktop") == TargetKind.Social, "Telegram 应走社交兼容路径");
 Check(TargetApplication.ClassifyProcessName("WindowsTerminal") == TargetKind.Terminal, "Windows Terminal 应识别为终端");
-Check(TargetApplication.ClassifyProcessName("notepad") == TargetKind.Standard, "普通应用应走 UIA");
+Check(TargetApplication.ClassifyProcessName("notepad") == TargetKind.TextEditor, "记事本应允许剪贴板兼容读取");
+Check(TargetApplication.ClassifyProcessName("chrome") == TargetKind.Standard, "浏览器不属于自动剪贴板兼容目标");
 Console.WriteLine("Windows 安全快照、快捷键与目标识别检查通过。");
 
 sealed class FakeReplacementBackend : IReplacementBackend

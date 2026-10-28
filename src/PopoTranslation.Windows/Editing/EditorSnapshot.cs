@@ -35,7 +35,7 @@ public sealed record EditorSnapshot(
         : DocumentText;
 }
 
-public sealed record CaptureResult(CaptureStatus Status, EditorSnapshot? Snapshot = null);
+public sealed record CaptureResult(CaptureStatus Status, EditorSnapshot? Snapshot = null, string? Reason = null);
 
 public enum ReplacementStatus { Applied, SubmittedUnconfirmed, ManualApply, Failed }
 public sealed record ReplacementResult(ReplacementStatus Status, string? Reason = null);

@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 
 namespace PopoTranslation.Windows.Automation;
 
-public enum TargetKind { Standard, Social, Terminal }
+public enum TargetKind { Standard, Social, TextEditor, Terminal }
 
 public static class TargetApplication
 {
@@ -11,6 +11,11 @@ public static class TargetApplication
     {
         "QQ", "QQNT", "QQEX", "Weixin", "WeChat", "WeChatAppEx",
         "Discord", "Telegram", "TelegramDesktop"
+    };
+
+    private static readonly HashSet<string> TextEditorProcesses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "notepad", "notepad++", "notepad3"
     };
 
     private static readonly HashSet<string> TerminalProcesses = new(StringComparer.OrdinalIgnoreCase)
@@ -31,6 +36,7 @@ public static class TargetApplication
         var name = processName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
             ? processName[..^4] : processName;
         if (SocialProcesses.Contains(name)) return TargetKind.Social;
+        if (TextEditorProcesses.Contains(name)) return TargetKind.TextEditor;
         if (TerminalProcesses.Contains(name)) return TargetKind.Terminal;
         return TargetKind.Standard;
     }

@@ -392,7 +392,7 @@ internal sealed class ApplicationController : IDisposable
             if (!IsCurrent(generation, token)) return;
             if (capture.Snapshot is null)
             {
-                Notify(CaptureMessage(capture.Status), true);
+                Notify(CaptureMessage(capture), true);
                 return;
             }
             var key = await _secrets.ReadAsync(profile.CredentialReference, token);
@@ -490,15 +490,19 @@ internal sealed class ApplicationController : IDisposable
         });
     }
 
-    private static string CaptureMessage(CaptureStatus status) => status switch
+    private static string CaptureMessage(CaptureResult result)
     {
-        CaptureStatus.Protected => "受保护的输入框不能读取。",
-        CaptureStatus.ReadOnly => "当前控件不可编辑。",
-        CaptureStatus.Empty => "当前选区或输入框为空。",
-        CaptureStatus.Busy => "输入框读取服务正忙，请稍后重试。",
-        CaptureStatus.NoFocusedEditor => "找不到当前输入框。",
-        _ => "无法安全读取当前输入框；终端请先选中文本并使用选区快捷键。"
-    };
+        if (!string.IsNullOrWhiteSpace(result.Reason)) return result.Reason;
+        return result.Status switch
+        {
+            CaptureStatus.Protected => "受保护的输入框不能读取。",
+            CaptureStatus.ReadOnly => "当前控件不可编辑。",
+            CaptureStatus.Empty => "当前选区或输入框为空。",
+            CaptureStatus.Busy => "输入框读取服务正忙，请稍后重试。",
+            CaptureStatus.NoFocusedEditor => "找不到当前输入框。",
+            _ => "无法安全读取当前输入框；终端请先选中文本并使用选区快捷键。"
+        };
+    }
 
     private static string ResultMessage(TranslationResult result) => result.Status switch
     {

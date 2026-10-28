@@ -66,7 +66,8 @@ public sealed class ClipboardService : IDisposable
                 Thread.Sleep(20);
             }
             RestoreClipboard(oldData, sentinel);
-            return new(ClipboardCaptureStatus.NoSelection, Reason: "没有可读取的选中文字。");
+            return new(ClipboardCaptureStatus.NoSelection,
+                Reason: "没有读取到输入框文字；请确认焦点在输入框，且目标应用没有以更高权限运行。");
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
