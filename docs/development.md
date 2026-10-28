@@ -34,13 +34,15 @@ $env:NUGET_SCRATCH = 'D:\popotranslation-nuget\scratch'
 
 ## 运行
 
-在 Visual Studio 中打开 `popotranslation.slnx`，选择 `x64`，启动 `popotranslation` 项目。程序启动后从托盘打开设置，填写服务类型、模型、API Key、目标语言和快捷键，保存后使用快捷键翻译其他应用中的文字。
+在 Visual Studio 中打开 `popotranslation.slnx`，选择 `x64`，启动 `popotranslation` 项目。程序启动后从托盘打开设置，填写服务类型、模型、API Key、目标语言，保存后在输入框中连续按三次空格。备用选区/整框快捷键默认是 `Ctrl+Alt+F9` / `Ctrl+Alt+F10`。
 
 首次运行前应确保：
 
 - 已保存至少一个服务配置和密钥；没有密钥时不会发起翻译。
-- 快捷键未被其他应用占用；注册冲突会在设置页提示。
+- 备用快捷键被占用不会阻止保存；连续三次空格仍可使用。
 - 输入框是支持的焦点控件。密码框、只读控件、无法确认身份的控件会被拒绝。
+- QQ、微信、Discord、Telegram 使用剪贴板兼容路径时会短暂占用剪贴板；剪贴板含图片/文件时会保存并尝试恢复。
+- 终端中三次空格被禁用；请选中文本后使用选区备用快捷键。
 
 ## 测试
 

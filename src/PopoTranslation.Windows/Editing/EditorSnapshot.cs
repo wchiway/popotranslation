@@ -1,6 +1,9 @@
+using PopoTranslation.Windows.Automation;
+
 namespace PopoTranslation.Windows.Editing;
 
 public enum CaptureMode { Selection, WholeControl }
+public enum CaptureMethod { Uia, Clipboard }
 
 public enum CaptureStatus
 {
@@ -23,7 +26,9 @@ public sealed record EditorSnapshot(
     string DocumentText,
     int SelectionStart,
     int SelectionEnd,
-    CaptureMode Mode)
+    CaptureMode Mode,
+    CaptureMethod Method = CaptureMethod.Uia,
+    TargetKind TargetKind = TargetKind.Standard)
 {
     public string SourceText => Mode == CaptureMode.Selection
         ? DocumentText[SelectionStart..SelectionEnd]

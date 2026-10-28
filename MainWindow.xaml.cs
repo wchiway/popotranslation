@@ -1,3 +1,4 @@
+using System;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using popotranslation.Services;
@@ -12,9 +13,19 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        ResizeForContent();
         AppWindow.Closing += OnClosing;
         _controller = new ApplicationController(Settings, DispatcherQueue, ShowSettings, ExitApplication);
         _ = _controller.InitializeAsync();
+    }
+
+    private void ResizeForContent()
+    {
+        var display = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest);
+        if (display is null) return;
+        var width = Math.Clamp(display.WorkArea.Width - 96, 820, 1180);
+        var height = Math.Clamp(display.WorkArea.Height - 96, 700, 900);
+        AppWindow.Resize(new Windows.Graphics.SizeInt32(width, height));
     }
 
     public void ShowSettings()

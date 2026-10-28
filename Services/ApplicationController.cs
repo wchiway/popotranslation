@@ -32,6 +32,7 @@ internal sealed class ApplicationController : IDisposable
     private readonly FocusedEditorReader _editor = new();
     private NativeMessageWindow? _native;
     private GlobalHotkeyService? _hotkeys;
+    private SpaceSequenceHotkeyService? _spaceHotkey;
     private TrayIconService? _tray;
     private volatile AppSettings? _settings;
     private CancellationTokenSource? _pending;
@@ -40,6 +41,7 @@ internal sealed class ApplicationController : IDisposable
     private volatile bool _disposed;
     private volatile bool _saving;
     private bool _settingsUnavailable;
+    private bool _spaceHotkeyUnavailable;
     private volatile bool _initialized;
 
     public bool CanHide => _tray is not null;
@@ -68,6 +70,17 @@ internal sealed class ApplicationController : IDisposable
             _native = new NativeMessageWindow();
             _hotkeys = new GlobalHotkeyService(_native);
             _hotkeys.Triggered += OnHotkey;
+            try
+            {
+                _spaceHotkey = new SpaceSequenceHotkeyService(_native);
+                _spaceHotkey.Triggered += OnTripleSpace;
+            }
+            catch
+            {
+                _spaceHotkey?.Dispose();
+                _spaceHotkey = null;
+                _spaceHotkeyUnavailable = true;
+            }
             var icon = LoadIcon(0, (nint)32512);
             _tray = new TrayIconService(_native, icon);
             _tray.ActionRequested += OnTrayAction;
@@ -76,6 +89,8 @@ internal sealed class ApplicationController : IDisposable
         {
             _tray?.Dispose();
             _tray = null;
+            _spaceHotkey?.Dispose();
+            _spaceHotkey = null;
             _hotkeys?.Dispose();
             _hotkeys = null;
             _native?.Dispose();
@@ -95,6 +110,8 @@ internal sealed class ApplicationController : IDisposable
                 _page.LoadSettings(new SettingsForm(id, "", nameof(ApiProtocol.OpenAiChatCompletions), "", "", "", false, 30, null, "简体中文", null, DefaultSelectionHotkey, DefaultWholeHotkey));
                 _page.SetProfiles([new ProfileOption(id, "新服务")], id);
                 _initialized = true;
+                if (_spaceHotkeyUnavailable)
+                    _page.SetStatus("连续三次空格快捷键不可用，请使用备用快捷键。", true);
                 return;
             }
             var profile = settings.Providers.FirstOrDefault(p => p.Id == settings.ActiveProviderId)
@@ -114,6 +131,8 @@ internal sealed class ApplicationController : IDisposable
                 _hasRegisteredHotkeys = true;
                 if (!hasKey) _page.SetStatus("找不到已保存的密钥，请重新输入并保存。", true);
             }
+            if (_spaceHotkeyUnavailable)
+                _page.SetStatus("连续三次空格快捷键不可用，请使用备用快捷键。", true);
         }
         catch
         {
@@ -254,8 +273,7 @@ internal sealed class ApplicationController : IDisposable
             if (newReference is not null) await _secrets.WriteAsync(newReference, key);
             if (_disposed) return new(false, "应用正在退出。");
             var registration = _hotkeys.ConfigurePair(selection!, whole!);
-            if (!registration.Success) return new(false, "快捷键注册失败，请检查是否被其他应用占用。");
-            _hasRegisteredHotkeys = true;
+            _hasRegisteredHotkeys = registration.Success;
             var profiles = (_settings?.Providers ?? Array.Empty<ProviderProfile>()).Where(p => p.Id != profile!.Id).Append(profile!).ToArray();
             var next = new AppSettings(AppSettings.CurrentSchemaVersion, profiles, profile!.Id, form.TargetLanguage, form.SourceLanguage, form.Style, form.SelectionHotkey, form.WholeControlHotkey);
             try { await _settingsStore.SaveAsync(next); }
@@ -274,7 +292,9 @@ internal sealed class ApplicationController : IDisposable
                 try { await _secrets.DeleteAsync(previousReference); } catch { /* Orphaned encrypted key is harmless. */ }
             }
             newReference = null;
-            return new(true, "设置已保存。连接测试需要手动触发。");
+            return new(true, registration.Success
+                ? "设置已保存。连接测试需要手动触发。"
+                : "设置已保存；备用快捷键被占用，但仍可使用连续三次空格。");
         }
         catch { return new(false, "保存失败，请检查服务地址、密钥和快捷键。"); }
         finally
@@ -323,6 +343,16 @@ internal sealed class ApplicationController : IDisposable
         _ = CaptureThenTranslateAsync(action, foreground, generation);
     }
 
+    private bool OnTripleSpace()
+    {
+        var settings = _settings;
+        if (_disposed || _paused || _saving || !_initialized || settings?.Providers
+            .FirstOrDefault(p => p.Id == settings.ActiveProviderId) is null)
+            return false;
+        OnHotkey(HotkeyAction.TripleSpace);
+        return true;
+    }
+
     private async Task CaptureThenTranslateAsync(HotkeyAction action, nint foreground, long generation)
     {
         if (_disposed || _paused || _saving || !IsCurrent(generation)) return;
@@ -350,9 +380,9 @@ internal sealed class ApplicationController : IDisposable
         var token = _pending.Token;
         var settings = _settings;
         var profile = settings?.Providers.FirstOrDefault(p => p.Id == settings.ActiveProviderId);
-        if (!_initialized || settings is null || profile is null || !_hasRegisteredHotkeys)
+        if (!_initialized || settings is null || profile is null)
         {
-            Notify("请先打开设置并保存有效的服务和快捷键。", true);
+            Notify("请先打开设置并保存有效的服务配置。", true);
             return;
         }
         _page.SetResult(null);
@@ -369,7 +399,14 @@ internal sealed class ApplicationController : IDisposable
             if (!IsCurrent(generation, token)) return;
             if (string.IsNullOrWhiteSpace(key)) { Notify("找不到服务密钥，请在设置中重新保存。", true); return; }
             _page.SetStatus("正在翻译…");
-            var request = new TranslationRequest(capture.Snapshot.SourceText, settings.TargetLanguage, settings.SourceLanguage, settings.Style);
+            var sourceText = capture.Snapshot.SourceText;
+            if (action == HotkeyAction.TripleSpace) sourceText = sourceText.TrimEnd(' ');
+            if (string.IsNullOrWhiteSpace(sourceText))
+            {
+                Notify("输入框为空，没有可翻译的内容。", true);
+                return;
+            }
+            var request = new TranslationRequest(sourceText, settings.TargetLanguage, settings.SourceLanguage, settings.Style);
             var operation = await Task.Run(() =>
             {
                 lock (_startGate)
@@ -460,7 +497,7 @@ internal sealed class ApplicationController : IDisposable
         CaptureStatus.Empty => "当前选区或输入框为空。",
         CaptureStatus.Busy => "输入框读取服务正忙，请稍后重试。",
         CaptureStatus.NoFocusedEditor => "找不到当前输入框。",
-        _ => "无法安全读取当前输入框；请检查焦点和控件兼容性。"
+        _ => "无法安全读取当前输入框；终端请先选中文本并使用选区快捷键。"
     };
 
     private static string ResultMessage(TranslationResult result) => result.Status switch
@@ -521,6 +558,8 @@ internal sealed class ApplicationController : IDisposable
         _disposed = true;
         Invalidate();
         _pending?.Dispose();
+        _spaceHotkey?.Dispose();
+        _spaceHotkey = null;
         _tray?.Dispose();
         _hotkeys?.Dispose();
         _native?.Dispose();

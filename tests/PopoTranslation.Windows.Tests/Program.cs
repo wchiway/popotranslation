@@ -44,6 +44,13 @@ using (var cancelledDuringObservation = new CancellationTokenSource())
 }
 Check(EditorReplacer.Replace(whole, "译文\n后续", backend).Status == ReplacementStatus.ManualApply && backend.Writes == 0,
     "多行译文不可写入单行框");
+var flexible = new FakeReplacementBackend { Current = snapshot, SupportsSelection = true, SupportsMultiline = true };
+Check(EditorReplacer.Replace(snapshot, "译文\n后续", flexible).Status == ReplacementStatus.Applied,
+    "支持选区和多行的兼容后端应允许写入");
+flexible.Current = whole;
+flexible.Confirmed = true;
+Check(EditorReplacer.Replace(whole, "译文\n后续", flexible).Status == ReplacementStatus.Applied,
+    "多行兼容后端应允许整框写入");
 Check(EditorReplacer.Replace(whole, "译文", backend).Status == ReplacementStatus.Applied && backend.Writes == 1,
     "一致时应提交且确认");
 backend.Confirmed = false;
@@ -88,11 +95,35 @@ using (var window = new NativeMessageWindow())
     hotkeys.Dispose();
     Check(native.Active.Count == 0, "退出时必须释放注册");
 }
-Console.WriteLine("Windows 安全快照与快捷键检查通过。");
+
+var detector = new TripleSpaceDetector(500);
+Check(!detector.Process(TripleSpaceDetector.SpaceVirtualKey, true, 1000), "第一次空格不触发");
+Check(!detector.Process(TripleSpaceDetector.SpaceVirtualKey, false, 1010), "空格松开不触发");
+Check(!detector.Process(TripleSpaceDetector.SpaceVirtualKey, true, 1020), "第二次空格不触发");
+Check(!detector.Process(TripleSpaceDetector.SpaceVirtualKey, false, 1030), "第二次松开不触发");
+Check(detector.Process(TripleSpaceDetector.SpaceVirtualKey, true, 1040), "第三次空格必须触发");
+Check(!detector.Process(TripleSpaceDetector.SpaceVirtualKey, true, 1050), "按住空格自动重复不得连续触发");
+
+var slow = new TripleSpaceDetector(500);
+Check(!slow.Process(TripleSpaceDetector.SpaceVirtualKey, true, 1000), "首次空格不触发");
+Check(!slow.Process(TripleSpaceDetector.SpaceVirtualKey, true, 2000), "超时后重新计数");
+Check(!slow.Process(TripleSpaceDetector.SpaceVirtualKey, true, 2100), "超时后的第二击不触发");
+Check(!slow.Process(0x41, true, 2110), "非空格键重置序列");
+Check(!slow.Process(TripleSpaceDetector.SpaceVirtualKey, true, 2120), "重置后重新计数");
+
+Check(TargetApplication.ClassifyProcessName("QQ") == TargetKind.Social, "QQ 应走社交兼容路径");
+Check(TargetApplication.ClassifyProcessName("Weixin.exe") == TargetKind.Social, "微信应走社交兼容路径");
+Check(TargetApplication.ClassifyProcessName("Discord") == TargetKind.Social, "Discord 应走社交兼容路径");
+Check(TargetApplication.ClassifyProcessName("TelegramDesktop") == TargetKind.Social, "Telegram 应走社交兼容路径");
+Check(TargetApplication.ClassifyProcessName("WindowsTerminal") == TargetKind.Terminal, "Windows Terminal 应识别为终端");
+Check(TargetApplication.ClassifyProcessName("notepad") == TargetKind.Standard, "普通应用应走 UIA");
+Console.WriteLine("Windows 安全快照、快捷键与目标识别检查通过。");
 
 sealed class FakeReplacementBackend : IReplacementBackend
 {
     public EditorSnapshot? Current { get; set; }
+    public bool SupportsSelection { get; set; }
+    public bool SupportsMultiline { get; set; }
     public int Writes { get; private set; }
     public bool Confirmed { get; set; } = true;
     public bool ThrowOnWrite { get; set; }

@@ -28,9 +28,9 @@ public sealed class RedirectTests
         var provider = TranslationProviderFactory.Create(profile, "dummy-key");
         var result = await provider.TranslateAsync(new TranslationRequest("dummy text", "Chinese", null, null), deadline.Token);
         await server;
-        Assert.Equal(TranslationStatus.Failed, result.Status);
-        Assert.Equal("http_307", result.ErrorCode);
-        Assert.False(destination.Pending());
+        Assert.True(result.Status == TranslationStatus.Failed && result.ErrorCode == "http_307",
+            $"protocol={protocol}, status={result.Status}, error={result.ErrorCode}, message={result.ErrorMessage}, destinationPending={destination.Pending()}");
+        Assert.False(destination.Pending(), $"protocol={protocol}: redirect target received a connection");
     }
 
     private static async Task SendRedirectAsync(TcpListener listener, int destinationPort, CancellationToken cancellationToken)

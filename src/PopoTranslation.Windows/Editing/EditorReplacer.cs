@@ -4,6 +4,8 @@ namespace PopoTranslation.Windows.Editing;
 // fail closed if they cannot establish the target's identity and editability.
 public interface IReplacementBackend
 {
+    bool SupportsSelection => false;
+    bool SupportsMultiline => false;
     EditorSnapshot? ObserveEligibleTarget();
     void SetValue(string text);
     bool ConfirmValue(string text);
@@ -17,9 +19,10 @@ public static class EditorReplacer
         ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentNullException.ThrowIfNull(translatedText);
         ArgumentNullException.ThrowIfNull(backend);
-        if (snapshot.Mode != CaptureMode.WholeControl || string.IsNullOrWhiteSpace(translatedText) ||
-            translatedText.IndexOfAny(['\r', '\n', '\0']) >= 0)
-            return new(ReplacementStatus.ManualApply, "仅支持单行输入框的非空整框替换。");
+        if ((!backend.SupportsSelection && snapshot.Mode != CaptureMode.WholeControl) ||
+            string.IsNullOrWhiteSpace(translatedText) ||
+            (!backend.SupportsMultiline && translatedText.IndexOfAny(['\r', '\n', '\0']) >= 0))
+            return new(ReplacementStatus.ManualApply, "当前控件或译文不支持自动替换，请手动应用。");
         var submitted = false;
         try
         {

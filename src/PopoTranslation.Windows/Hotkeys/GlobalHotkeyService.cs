@@ -5,7 +5,7 @@ namespace PopoTranslation.Windows.Hotkeys;
 
 [Flags]
 public enum HotkeyModifiers : uint { Alt = 1, Control = 2, Shift = 4, Windows = 8 }
-public enum HotkeyAction { Selection, WholeControl }
+public enum HotkeyAction { Selection, WholeControl, TripleSpace }
 public sealed record Hotkey(HotkeyModifiers Modifiers, uint VirtualKey);
 public sealed record HotkeyRegistrationResult(bool Success, int ErrorCode = 0);
 

@@ -4,46 +4,82 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
-        <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-            <StackPanel MaxWidth="820" Margin="32,28,32,40" Spacing="24">
-                <StackPanel Spacing="6">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ScrollViewer Grid.Row="0" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+            <Grid Margin="32,28,32,28" RowSpacing="20" ColumnSpacing="24">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="340" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Row="0" Grid.ColumnSpan="2" Spacing="6">
                     <TextBlock Text="PopoTranslation" Style="{StaticResource TitleTextBlockStyle}" />
-                    <TextBlock Text="配置翻译语言、快捷键和服务连接。" TextWrapping="Wrap"
+                    <TextBlock Text="配置翻译语言、默认触发方式和服务连接。" TextWrapping="Wrap"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 </StackPanel>
 
-                <InfoBar x:Name="StatusBar" IsOpen="True" IsClosable="False" Severity="Informational"
-                         Title="准备就绪" Message="保存设置后，使用快捷键开始翻译。" />
+                <InfoBar x:Name="StatusBar" Grid.Row="1" Grid.ColumnSpan="2" IsOpen="True" IsClosable="False"
+                         Severity="Informational" Title="准备就绪" Message="保存设置后，使用快捷键开始翻译。" />
 
-                <Border x:Name="TranslationCard" Padding="20" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                    <StackPanel Spacing="16">
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="翻译" Style="{StaticResource SubtitleTextBlockStyle}" />
-                            <TextBlock Text="选择语言并设置全局快捷键。" TextWrapping="Wrap"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <StackPanel Grid.Row="2" Grid.Column="0" Spacing="20">
+                    <Border x:Name="TranslationCard" Padding="20" CornerRadius="8"
+                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                        <StackPanel Spacing="16">
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="翻译" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                <TextBlock Text="默认连续按三次空格，翻译整个输入框。" TextWrapping="Wrap"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            </StackPanel>
+                            <TextBox x:Name="SourceLanguageBox" Header="源语言" PlaceholderText="自动识别（留空）"
+                                     AutomationProperties.Name="源语言，留空自动识别" />
+                            <TextBox x:Name="TargetLanguageBox" Header="目标语言" PlaceholderText="例如：简体中文、English"
+                                     AutomationProperties.Name="目标语言" />
+                            <TextBox x:Name="StyleBox" Header="翻译风格（可选）" PlaceholderText="例如：自然、简洁"
+                                     AutomationProperties.Name="翻译风格" />
+                            <TextBox x:Name="SelectionHotkeyBox" Header="选区翻译（备用快捷键）" PlaceholderText="例如：Ctrl+Alt+F9"
+                                     AutomationProperties.Name="选区翻译备用快捷键" />
+                            <TextBox x:Name="WholeHotkeyBox" Header="整框翻译（备用快捷键）" PlaceholderText="例如：Ctrl+Alt+F10"
+                                     AutomationProperties.Name="整框翻译备用快捷键" />
+                            <TextBlock Text="备用快捷键格式：Ctrl、Alt 或 Shift 加一个字母、数字或 F1–F24（F12 除外）。连续三次空格始终启用。"
+                                       TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         </StackPanel>
-                        <TextBox x:Name="SourceLanguageBox" Header="源语言" PlaceholderText="自动识别（留空）"
-                                 AutomationProperties.Name="源语言，留空自动识别" />
-                        <TextBox x:Name="TargetLanguageBox" Header="目标语言" PlaceholderText="例如：简体中文、English"
-                                 AutomationProperties.Name="目标语言" />
-                        <TextBox x:Name="StyleBox" Header="翻译风格（可选）" PlaceholderText="例如：自然、简洁"
-                                 AutomationProperties.Name="翻译风格" />
-                        <TextBox x:Name="SelectionHotkeyBox" Header="翻译选中文字" PlaceholderText="例如：Ctrl+Alt+F9"
-                                 AutomationProperties.Name="翻译选中文字快捷键" />
-                        <TextBox x:Name="WholeHotkeyBox" Header="翻译整个输入框" PlaceholderText="例如：Ctrl+Alt+F10"
-                                 AutomationProperties.Name="翻译整个输入框快捷键" />
-                        <TextBlock Text="快捷键格式：Ctrl、Alt 或 Shift 加一个字母、数字或功能键（F12 除外）。注册冲突将在保存时提示。"
-                                   TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    </StackPanel>
-                </Border>
+                    </Border>
 
-                <Border x:Name="ServiceCard" Padding="20" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    <Border Padding="20" CornerRadius="8"
+                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                        <StackPanel Spacing="10">
+                            <TextBlock Text="使用方式" Style="{StaticResource SubtitleTextBlockStyle}" />
+                            <TextBlock Text="• 连续三次空格：翻译当前输入框。第三次空格会被拦截，不会写入正文。"
+                                       TextWrapping="Wrap" />
+                            <TextBlock Text="• QQ、微信、Discord、Telegram：优先使用 UI Automation，无法读取时使用剪贴板兼容读取和回填。"
+                                       TextWrapping="Wrap" />
+                            <TextBlock Text="• 终端：请先选中文本，再使用选区备用快捷键。终端内容只读取，不会自动替换。"
+                                       TextWrapping="Wrap" />
+                            <TextBlock Text="• 无法自动回填时，译文会显示在下方结果区，方便复制。"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <Border x:Name="ServiceCard" Grid.Row="2" Grid.Column="1" Padding="20" CornerRadius="8"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                     <StackPanel Spacing="16">
                         <StackPanel Spacing="4">
                             <TextBlock Text="翻译服务" Style="{StaticResource SubtitleTextBlockStyle}" />
-                            <TextBlock Text="设置当前使用的服务和模型。" TextWrapping="Wrap"
+                            <TextBlock Text="设置当前使用的服务、模型和密钥。" TextWrapping="Wrap"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         </StackPanel>
                         <ComboBox x:Name="ProfilesBox" Header="当前服务" HorizontalAlignment="Stretch"
@@ -73,17 +109,11 @@
                                  AutomationProperties.Name="请求超时，单位秒" />
                         <TextBlock Text="连接测试会发送测试请求，可能产生少量费用。" TextWrapping="Wrap"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <StackPanel Orientation="Horizontal" Spacing="12">
-                            <Button x:Name="SaveButton" Content="保存设置" Click="Save_Click"
-                                    Style="{StaticResource AccentButtonStyle}" />
-                            <Button x:Name="TestButton" Content="测试连接" Click="Test_Click" />
-                            <ProgressRing x:Name="BusyIndicator" IsActive="False" Width="20" Height="20"
-                                          AutomationProperties.Name="正在处理" />
-                        </StackPanel>
                     </StackPanel>
                 </Border>
 
-                <Border Padding="20" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                <Border Grid.Row="3" Grid.ColumnSpan="2" Padding="20" CornerRadius="8"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                     <StackPanel Spacing="12">
                         <StackPanel Spacing="4">
@@ -92,7 +122,7 @@
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         </StackPanel>
                         <TextBox x:Name="ResultBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
-                                 MinHeight="100" MaxHeight="260" PlaceholderText="结果会显示在这里"
+                                 MinHeight="110" MaxHeight="300" PlaceholderText="结果会显示在这里"
                                  AutomationProperties.Name="翻译结果" />
                         <StackPanel Orientation="Horizontal" Spacing="12">
                             <Button x:Name="CopyButton" Content="复制结果" IsEnabled="False" Click="Copy_Click" />
@@ -100,7 +130,27 @@
                         </StackPanel>
                     </StackPanel>
                 </Border>
-            </StackPanel>
+            </Grid>
         </ScrollViewer>
+
+        <Border Grid.Row="1" Padding="32,12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0">
+            <Grid ColumnSpacing="16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" VerticalAlignment="Center" TextWrapping="Wrap"
+                           Text="设置仅保存在本机；密钥不会写入配置 JSON。"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12">
+                    <Button x:Name="TestButton" Content="测试连接" Click="Test_Click" />
+                    <Button x:Name="SaveButton" Content="保存设置" Click="Save_Click"
+                            Style="{StaticResource AccentButtonStyle}" />
+                    <ProgressRing x:Name="BusyIndicator" IsActive="False" Width="20" Height="20"
+                                  AutomationProperties.Name="正在处理" />
+                </StackPanel>
+            </Grid>
+        </Border>
     </Grid>
 </Page>

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows.Automation;
 using System.Windows.Automation.Text;
+using PopoTranslation.Windows.Clipboard;
 using PopoTranslation.Windows.Editing;
 
 namespace PopoTranslation.Windows.Automation;
@@ -10,6 +11,7 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
 {
     private const int MaxTextLength = 1_000_000;
     private readonly AutomationWorker _worker = new();
+    private readonly ClipboardService _clipboard = new();
 
     public static nint GetForegroundWindowAtTrigger() => GetForegroundWindow();
 
@@ -17,13 +19,58 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
         CancellationToken cancellationToken = default)
     {
         if (expectedForegroundHwnd == 0) return new(CaptureStatus.NoFocusedEditor);
+        var targetKind = TargetApplication.ClassifyWindow(expectedForegroundHwnd);
+        if (targetKind == TargetKind.Terminal && mode == CaptureMode.WholeControl)
+            return new(CaptureStatus.Unsupported);
         try
         {
-            var (accepted, result) = await _worker.InvokeAsync(() => CaptureStable(mode, expectedForegroundHwnd), cancellationToken);
-            return accepted ? result! : new(CaptureStatus.Busy);
+            var (accepted, uia) = await _worker.InvokeAsync(
+                () => CaptureStable(mode, expectedForegroundHwnd), cancellationToken);
+            if (accepted && uia is not null)
+            {
+                if (uia.Status == CaptureStatus.Captured)
+                    return new(CaptureStatus.Captured, uia.Snapshot! with { TargetKind = targetKind });
+
+                // Never bypass a protected or read-only refusal with clipboard simulation.
+                if (uia.Status is not (CaptureStatus.Protected or CaptureStatus.ReadOnly))
+                {
+                    var clipboard = await TryClipboardCaptureAsync(
+                        mode, expectedForegroundHwnd, targetKind, cancellationToken);
+                    if (clipboard is not null) return clipboard;
+                }
+                return uia;
+            }
+            return new(CaptureStatus.Busy);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception) { return new(CaptureStatus.Unavailable); }
+    }
+
+    private async Task<CaptureResult?> TryClipboardCaptureAsync(CaptureMode mode, nint expectedForeground,
+        TargetKind targetKind, CancellationToken cancellationToken)
+    {
+        if (targetKind == TargetKind.Standard) return null;
+        if (targetKind == TargetKind.Terminal && mode == CaptureMode.WholeControl) return null;
+        var capture = await _clipboard.CaptureAsync(expectedForeground,
+            selectAll: mode == CaptureMode.WholeControl, terminalCopy: targetKind == TargetKind.Terminal,
+            cancellationToken);
+        if (capture.Status != ClipboardCaptureStatus.Captured || capture.Text is null) return null;
+
+        var processId = 0;
+        var start = 0L;
+        try
+        {
+            GetWindowThreadProcessId(expectedForeground, out var pid);
+            processId = (int)pid;
+            using var process = Process.GetProcessById(processId);
+            start = process.StartTime.ToUniversalTime().Ticks;
+        }
+        catch { }
+
+        var snapshot = new EditorSnapshot(expectedForeground, processId, start, "clipboard",
+            capture.Text, 0, mode == CaptureMode.Selection ? capture.Text.Length : 0, mode,
+            CaptureMethod.Clipboard, targetKind);
+        return new(CaptureStatus.Captured, snapshot);
     }
 
     // The caller must synchronously execute the callback only while the task is current.
@@ -34,6 +81,11 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
         ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentNullException.ThrowIfNull(translatedText);
         ArgumentNullException.ThrowIfNull(executeIfCurrent);
+        if (snapshot.TargetKind == TargetKind.Terminal)
+            return new(ReplacementStatus.ManualApply, "终端内容不会被自动替换，请复制译文后手动粘贴。");
+        IReplacementBackend backend = snapshot.Method == CaptureMethod.Clipboard || snapshot.Mode == CaptureMode.Selection
+            ? new ClipboardReplacementBackend(snapshot, _clipboard)
+            : new NativeReplacementBackend(snapshot, _clipboard);
         try
         {
             var (accepted, result) = await _worker.InvokeAsync(() =>
@@ -42,7 +94,7 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
                 return executeIfCurrent(() =>
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    return EditorReplacer.Replace(snapshot, translatedText, new NativeReplacementBackend(), cancellationToken);
+                    return EditorReplacer.Replace(snapshot, translatedText, backend, cancellationToken);
                 });
             }, cancellationToken, waitForCompletion: true);
             return accepted ? result! : new(ReplacementStatus.ManualApply, "辅助功能线程繁忙，请手动应用。");
@@ -68,12 +120,15 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
         var element = AutomationElement.FocusedElement;
         if (element is null) return new(CaptureStatus.NoFocusedEditor);
 
-        // Ignore UIA defaults: an unsupported password/enabled property is not proof of safety.
-        var password = element.GetCurrentPropertyValue(AutomationElement.IsPasswordProperty, true);
-        if (password is not bool isPassword || isPassword) return new(CaptureStatus.Protected);
+        // Ignore UIA defaults: an unsupported protected/enabled property is not proof of safety.
+        var passwordProperty = element.GetCurrentPropertyValue(AutomationElement.IsPasswordProperty, true);
+        if (passwordProperty is not bool isPassword || isPassword) return new(CaptureStatus.Protected);
         var enabled = element.GetCurrentPropertyValue(AutomationElement.IsEnabledProperty, true);
         if (enabled is not bool isEnabled || !isEnabled) return new(CaptureStatus.ReadOnly);
-        if (element.Current.ControlType != ControlType.Edit) return new(CaptureStatus.Unsupported);
+        var controlType = element.Current.ControlType;
+        if (controlType != ControlType.Edit &&
+            !(mode == CaptureMode.Selection && controlType == ControlType.Document))
+            return new(CaptureStatus.Unsupported);
 
         ValuePattern? value = null;
         if (element.TryGetCurrentPattern(ValuePattern.Pattern, out var valueObject) &&
@@ -139,33 +194,58 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
             string.Join(",", runtimeId), full, selectionStart, selectionEnd, mode));
     }
 
-    private sealed class NativeReplacementBackend : IReplacementBackend
+    private sealed class NativeReplacementBackend(EditorSnapshot snapshot, ClipboardService clipboard) : IReplacementBackend
     {
         private ValuePattern? _value;
         private EditorSnapshot? _before;
+        private bool _usedClipboard;
+
+        public bool SupportsSelection => true;
+        public bool SupportsMultiline => true;
 
         public EditorSnapshot? ObserveEligibleTarget()
         {
             var foreground = GetForegroundWindow();
-            var captured = CaptureStable(CaptureMode.WholeControl, foreground);
+            if (foreground != snapshot.WindowHandle) return null;
+            var captured = CaptureStable(snapshot.Mode, foreground);
             if (captured.Status != CaptureStatus.Captured) return null;
             var element = AutomationElement.FocusedElement;
-            if (element is null || string.Join(",", element.GetRuntimeId()) != captured.Snapshot!.ElementRuntimeId ||
-                !IsSafeSingleLineEdit(element, captured.Snapshot.WindowHandle) ||
-                !element.TryGetCurrentPattern(ValuePattern.Pattern, out var pattern) ||
-                pattern is not ValuePattern value || value.Current.IsReadOnly) return null;
-            var final = CaptureOnce(CaptureMode.WholeControl, foreground);
+            if (element is null || string.Join(",", element.GetRuntimeId()) != captured.Snapshot!.ElementRuntimeId)
+                return null;
+            if (element.Current.ControlType != ControlType.Edit) return null;
+            var passwordProperty = element.GetCurrentPropertyValue(AutomationElement.IsPasswordProperty, true);
+            if (passwordProperty is not bool isPassword || isPassword) return null;
+
+            // ValuePattern cannot replace a selection; use clipboard for a selection.
+            _value = null;
+            if (snapshot.Mode == CaptureMode.WholeControl &&
+                element.TryGetCurrentPattern(ValuePattern.Pattern, out var pattern) &&
+                pattern is ValuePattern value && !value.Current.IsReadOnly)
+                _value = value;
+
+            var final = CaptureOnce(snapshot.Mode, foreground);
             if (final.Status != CaptureStatus.Captured ||
-                !EditorSnapshotValidator.Matches(captured.Snapshot, final.Snapshot!) ||
-                !IsSafeSingleLineEdit(element, captured.Snapshot.WindowHandle)) return null;
-            _value = value;
-            return _before = final.Snapshot;
+                !EditorSnapshotValidator.Matches(captured.Snapshot, final.Snapshot!)) return null;
+            _before = final.Snapshot;
+            return _before;
         }
 
-        public void SetValue(string text) => _value!.SetValue(text);
+        public void SetValue(string text)
+        {
+            if (_value is not null)
+            {
+                _value.SetValue(text);
+                _usedClipboard = false;
+                return;
+            }
+            _usedClipboard = true;
+            if (!clipboard.Paste(snapshot.WindowHandle, text, snapshot.Mode == CaptureMode.WholeControl))
+                throw new InvalidOperationException("无法提交剪贴板粘贴。");
+        }
 
         public bool ConfirmValue(string text)
         {
+            if (_usedClipboard) return false;
             var element = AutomationElement.FocusedElement;
             return _before is not null && element is not null &&
                 GetForegroundWindow() == _before.WindowHandle &&
@@ -175,40 +255,39 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
         }
     }
 
-    private static bool IsSafeSingleLineEdit(AutomationElement element, nint foreground)
+    private sealed class ClipboardReplacementBackend(EditorSnapshot snapshot, ClipboardService clipboard) : IReplacementBackend
     {
-        var handle = (nint)element.Current.NativeWindowHandle;
-        if (handle == 0) return false;
-        var thread = GetWindowThreadProcessId(handle, out var pid);
-        if (thread == 0 || pid != (uint)element.Current.ProcessId) return false;
-        var info = new GuiThreadInfo { Size = (uint)Marshal.SizeOf<GuiThreadInfo>() };
-        if (!GetGUIThreadInfo(thread, ref info) || info.Focus != handle || GetForegroundWindow() != foreground)
-            return false;
-        var name = new System.Text.StringBuilder(128);
-        if (GetClassName(handle, name, name.Capacity) == 0 || name.ToString() != "Edit") return false;
-        var style = GetWindowLong(handle, -16);
-        if ((style & (0x0004 | 0x0020 | 0x0800)) != 0) return false; // multiline, password, read-only
-        var layout = GetKeyboardLayout(thread);
-        // Only a plain English keyboard layout is accepted; IME/TSF composition otherwise is unknown.
-        if (((long)layout & 0x3ff) != 0x09 || ImmIsIME(layout)) return false;
-        return true;
+        public bool SupportsSelection => true;
+        public bool SupportsMultiline => true;
+
+        public EditorSnapshot? ObserveEligibleTarget()
+        {
+            if (GetForegroundWindow() != snapshot.WindowHandle) return null;
+            GetWindowThreadProcessId(snapshot.WindowHandle, out var processId);
+            if ((int)processId != snapshot.ProcessId) return null;
+            var current = clipboard.Capture(snapshot.WindowHandle,
+                selectAll: snapshot.Mode == CaptureMode.WholeControl);
+            if (current.Status != ClipboardCaptureStatus.Captured || current.Text is null) return null;
+            var expected = snapshot.Mode == CaptureMode.Selection ? snapshot.SourceText : snapshot.DocumentText;
+            return current.Text == expected ? snapshot : null;
+        }
+
+        public void SetValue(string text)
+        {
+            if (!clipboard.Paste(snapshot.WindowHandle, text, snapshot.Mode == CaptureMode.WholeControl))
+                throw new InvalidOperationException("无法提交剪贴板粘贴。");
+        }
+
+        // A generic clipboard paste has no portable acknowledgement from the target app.
+        public bool ConfirmValue(string text) => false;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct GuiThreadInfo
+    public void Dispose()
     {
-        public uint Size, Flags;
-        public nint Active, Focus, Capture, MenuOwner, MoveSize, Caret;
-        public int Left, Top, Right, Bottom;
+        _worker.Dispose();
+        _clipboard.Dispose();
     }
 
-    public void Dispose() => _worker.Dispose();
-
-    [DllImport("user32.dll")] private static extern bool GetGUIThreadInfo(uint thread, ref GuiThreadInfo info);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(nint window, System.Text.StringBuilder name, int count);
-    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")] private static extern int GetWindowLong(nint window, int index);
-    [DllImport("user32.dll")] private static extern nint GetKeyboardLayout(uint thread);
-    [DllImport("imm32.dll")] private static extern bool ImmIsIME(nint layout);
     [DllImport("user32.dll")]
     private static extern nint GetForegroundWindow();
     [DllImport("user32.dll")]
