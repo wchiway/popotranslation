@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "popotranslation (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "popotranslation (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
