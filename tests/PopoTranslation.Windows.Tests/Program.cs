@@ -102,19 +102,54 @@ using (var window = new NativeMessageWindow())
 }
 
 var detector = new TripleSpaceDetector(500);
-Check(!detector.Process(TripleSpaceDetector.SpaceVirtualKey, true, 1000), "第一次空格不触发");
-Check(!detector.Process(TripleSpaceDetector.SpaceVirtualKey, false, 1010), "空格松开不触发");
-Check(!detector.Process(TripleSpaceDetector.SpaceVirtualKey, true, 1020), "第二次空格不触发");
-Check(!detector.Process(TripleSpaceDetector.SpaceVirtualKey, false, 1030), "第二次松开不触发");
-Check(detector.Process(TripleSpaceDetector.SpaceVirtualKey, true, 1040), "第三次空格必须触发");
-Check(!detector.Process(TripleSpaceDetector.SpaceVirtualKey, true, 1050), "按住空格自动重复不得连续触发");
+var triggers = 0;
+bool Accepted() { triggers++; return true; }
+bool Key(TripleSpaceDetector d, uint key, bool down, long time, bool eligible = true, bool modifiers = false,
+    bool injected = false, Func<bool>? trigger = null) =>
+    d.Process(key, down, time, eligible, modifiers, injected, trigger ?? Accepted);
+const uint space = TripleSpaceDetector.SpaceVirtualKey;
+Check(!Key(detector, space, true, 1000) && !Key(detector, space, false, 1010), "第一击必须透传");
+Check(!Key(detector, space, true, 1020) && !Key(detector, space, false, 1030), "第二击必须透传");
+Check(Key(detector, space, true, 1040) && Key(detector, space, true, 1050), "第三击和自动重复必须消耗");
+Check(Key(detector, space, false, 1060), "被消耗的按下必须配对消耗松开");
+Check(Key(detector, space, true, 1100) && Key(detector, space, false, 1110), "第四击必须消耗");
+Check(!Key(detector, 0x41, true, 1120) && !Key(detector, 0x41, false, 1130), "无关键必须透传且不能解除锁定");
+Check(Key(detector, space, true, 1140) && Key(detector, space, false, 1150), "第五击必须消耗");
+Check(Key(detector, space, true, 1640) && Key(detector, space, false, 1650), "恰好间隔边界仍属连按");
+Check(triggers == 1, "连按只能触发一次");
+Check(!Key(detector, space, true, 2141) && !Key(detector, space, false, 2150), "超过间隔后必须恢复正常输入");
+Check(!Key(detector, space, true, 2160) && !Key(detector, space, false, 2170), "重置后的第二击透传");
+Check(Key(detector, space, true, 2180) && Key(detector, space, false, 2190) && triggers == 2, "重置后可以再次触发");
 
 var slow = new TripleSpaceDetector(500);
-Check(!slow.Process(TripleSpaceDetector.SpaceVirtualKey, true, 1000), "首次空格不触发");
-Check(!slow.Process(TripleSpaceDetector.SpaceVirtualKey, true, 2000), "超时后重新计数");
-Check(!slow.Process(TripleSpaceDetector.SpaceVirtualKey, true, 2100), "超时后的第二击不触发");
-Check(!slow.Process(0x41, true, 2110), "非空格键重置序列");
-Check(!slow.Process(TripleSpaceDetector.SpaceVirtualKey, true, 2120), "重置后重新计数");
+Check(!Key(slow, space, true, 1000) && !Key(slow, space, false, 1010), "首次空格透传");
+Check(!Key(slow, space, true, 2000) && !Key(slow, space, false, 2010), "超时后重新计数");
+Check(!Key(slow, space, true, 2100) && !Key(slow, space, false, 2110), "超时后的第二击透传");
+Check(!Key(slow, 0x41, true, 2120), "非空格按下重置未完成序列");
+Check(!Key(slow, space, true, 2130) && !Key(slow, space, false, 2140), "重置后重新计数");
+
+var rejected = new TripleSpaceDetector(500);
+for (var i = 0; i < 6; i++)
+{
+    Check(!Key(rejected, space, true, 3000 + i * 20, trigger: () => false), "未接受的触发及后续空格均透传");
+    Check(!Key(rejected, space, false, 3010 + i * 20), "未接受的空格松开透传");
+}
+var excluded = new TripleSpaceDetector(500);
+for (var i = 0; i < 4; i++)
+{
+    Check(!Key(excluded, space, true, 4000 + i * 20, eligible: false), "终端或自身窗口空格透传");
+    Check(!Key(excluded, space, false, 4010 + i * 20), "终端或自身窗口松开透传");
+}
+Check(!Key(excluded, space, true, 4100, modifiers: true) && !Key(excluded, space, false, 4110), "组合键空格透传");
+Check(!Key(excluded, space, true, 4120, injected: true) && !Key(excluded, space, false, 4130, injected: true), "注入空格透传且不参与检测");
+Check(!Key(excluded, space, true, 4140) && !Key(excluded, space, false, 4150), "排除的按键不能累积计数");
+
+var paired = new TripleSpaceDetector(500);
+for (var i = 0; i < 2; i++) { Key(paired, space, true, 5000 + i * 20); Key(paired, space, false, 5010 + i * 20); }
+Check(Key(paired, space, true, 5040), "接受第三击");
+Check(!Key(paired, 0x10, true, 5050, modifiers: true), "修饰键透传");
+Check(Key(paired, space, false, 5060, eligible: false), "前台或修饰键变化时仍配对消耗松开");
+Check(!Key(paired, space, true, 5070, eligible: false) && !Key(paired, space, false, 5080), "切换到终端后空格透传并解除锁定");
 
 Check(TargetApplication.ClassifyProcessName("QQ") == TargetKind.Social, "QQ 应走社交兼容路径");
 Check(TargetApplication.ClassifyProcessName("Weixin.exe") == TargetKind.Social, "微信应走社交兼容路径");

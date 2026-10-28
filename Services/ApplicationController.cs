@@ -358,6 +358,7 @@ internal sealed class ApplicationController : IDisposable
     private async Task CaptureThenTranslateAsync(HotkeyAction action, nint foreground, long generation)
     {
         if (_disposed || _paused || _saving || !IsCurrent(generation)) return;
+        var captureStarted = Environment.TickCount64;
         CaptureResult capture;
         try
         {
@@ -372,7 +373,7 @@ internal sealed class ApplicationController : IDisposable
             DiagnosticLog.Write($"event=capture-exception generation={generation} type={error.GetType().Name} hresult={error.HResult:X8}");
             capture = new CaptureResult(CaptureStatus.Unavailable);
         }
-        DiagnosticLog.Write($"event=capture-finished generation={generation} status={capture.Status} method={capture.Snapshot?.Method.ToString() ?? "none"}");
+        DiagnosticLog.Write($"event=capture-finished generation={generation} status={capture.Status} method={capture.Snapshot?.Method.ToString() ?? "none"} elapsedMs={Environment.TickCount64 - captureStarted}");
 
         if (!IsCurrent(generation)) return;
         _dispatcher.TryEnqueue(() => _ = TranslateAsync(action, capture, generation));
@@ -414,6 +415,7 @@ internal sealed class ApplicationController : IDisposable
                 return;
             }
             var request = new TranslationRequest(sourceText, settings.TargetLanguage, settings.SourceLanguage, settings.Style);
+            var translationStarted = Environment.TickCount64;
             var operation = await Task.Run(() =>
             {
                 lock (_startGate)
@@ -424,8 +426,10 @@ internal sealed class ApplicationController : IDisposable
                 }
             }, token);
             var result = await operation.Completion;
+            DiagnosticLog.Write($"event=translation-complete generation={generation} status={result.Status} elapsedMs={Environment.TickCount64 - translationStarted}");
             if (!IsCurrent(generation, token)) return;
             if (!result.IsSuccessful || result.Text is null) { Notify(ResultMessage(result), true); return; }
+            var replacementStarted = Environment.TickCount64;
             var replacement = await _editor.ReplaceAsync(capture.Snapshot, result.Text, action =>
             {
                 if (!IsCurrent(generation, token)) return new ReplacementResult(ReplacementStatus.ManualApply);
@@ -433,6 +437,7 @@ internal sealed class ApplicationController : IDisposable
                     IsCurrent(generation, token) ? action() : new ReplacementResult(ReplacementStatus.ManualApply), out var value)
                     ? value : new ReplacementResult(ReplacementStatus.ManualApply);
             }, token, () => IsCurrent(generation, token));
+            DiagnosticLog.Write($"event=replacement-complete generation={generation} status={replacement.Status} elapsedMs={Environment.TickCount64 - replacementStarted}");
             if (!IsCurrent(generation, token)) return;
             if (replacement.Status == ReplacementStatus.Applied)
                 Notify("译文已回填。");

@@ -74,11 +74,15 @@ public sealed class ClipboardService : IDisposable
             cancellationToken.ThrowIfCancellationRequested();
             if (GetForegroundWindow() != expectedForeground)
                 return new(ClipboardCaptureStatus.Unavailable, Reason: "目标窗口已失去焦点。");
-            if (KeyboardSimulator.AreModifiersDown() || KeyboardSimulator.IsSpaceDown())
+            if ((KeyboardSimulator.AreModifiersDown() || KeyboardSimulator.IsSpaceDown()) &&
+                !await WaitForShortcutKeysReleasedAsync(cancellationToken))
             {
                 DiagnosticLog.Write("event=clipboard-result status=keys-held");
                 return new(ClipboardCaptureStatus.Unavailable, Reason: "快捷键仍被按住。");
             }
+            cancellationToken.ThrowIfCancellationRequested();
+            if (GetForegroundWindow() != expectedForeground)
+                return new(ClipboardCaptureStatus.Unavailable, Reason: "目标窗口已失去焦点。");
             FocusDiagnostics.Record("before-copy");
             var sent = terminalCopy ? KeyboardSimulator.SendTerminalCopy() : KeyboardSimulator.SendCopy();
             DiagnosticLog.Write($"event=send-copy success={sent} foreground={GetForegroundWindow()} spaceDown={KeyboardSimulator.IsSpaceDown()} modifiersDown={KeyboardSimulator.AreModifiersDown()}");

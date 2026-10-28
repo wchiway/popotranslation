@@ -6,9 +6,8 @@ using PopoTranslation.Windows.Messaging;
 
 namespace PopoTranslation.Windows.Hotkeys;
 
-// Global low-level space detector. It observes only space key transitions; it does
-// not record text or other keys. The third space is swallowed so the shortcut does
-// not insert the final separator into the target control.
+// Global low-level space detector. It does not record text or other keys.
+// Accepted shortcuts consume the third space and subsequent rapid spaces.
 public sealed class SpaceSequenceHotkeyService : IDisposable
 {
     private const int WhKeyboardLl = 13;
@@ -42,35 +41,18 @@ public sealed class SpaceSequenceHotkeyService : IDisposable
         {
             var message = (uint)wParam;
             var info = Marshal.PtrToStructure<KeyboardHookData>(lParam);
-            if ((info.Flags & LlkhfInjected) == 0 &&
-                (message is WmKeyDown or WmSysKeyDown) &&
-                KeyboardSimulator.AreModifiersDown())
+            var isDown = message is WmKeyDown or WmSysKeyDown;
+            var isUp = message is WmKeyUp or WmSysKeyUp;
+            if (isDown || isUp)
             {
-                _detector.Reset();
-            }
-            else
-            {
-                var isDown = message is WmKeyDown or WmSysKeyDown;
-                var isUp = message is WmKeyUp or WmSysKeyUp;
-                if (isDown || isUp)
-                {
-                    if (isDown && info.VirtualKey == TripleSpaceDetector.SpaceVirtualKey &&
-                        (IsOwnProcessForeground() || IsTerminalForeground()))
-                    {
-                        // A three-space shortcut cannot safely select terminal text because
-                        // the spaces would enter the terminal. Use the selection hotkey there.
-                        _detector.Reset();
-                    }
-                    else if (_detector.Process(info.VirtualKey, isDown, Environment.TickCount64))
-                    {
-                        var handler = Triggered;
-                        if (handler is not null)
-                        {
-                            try { if (handler()) return 1; }
-                            catch { /* Never cross the hook boundary. */ }
-                        }
-                    }
-                }
+                var injected = (info.Flags & LlkhfInjected) != 0;
+                var isSpaceDown = !injected && isDown && info.VirtualKey == TripleSpaceDetector.SpaceVirtualKey;
+                // Terminal and own-process spaces must pass through; their text cannot
+                // safely be captured by this shortcut.
+                var eligible = !isSpaceDown || (!IsOwnProcessForeground() && !IsTerminalForeground());
+                var modifiersDown = isSpaceDown && KeyboardSimulator.AreModifiersDown();
+                if (_detector.Process(info.VirtualKey, isDown, Environment.TickCount64,
+                    eligible, modifiersDown, injected, Triggered)) return 1;
             }
         }
         return CallNextHookEx(_hook, code, wParam, lParam);
