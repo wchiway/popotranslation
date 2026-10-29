@@ -1,0 +1,25 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="PopoTranslation" Manufacturer="PopoTranslation" Version="$(var.InstallerVersion)"
+           UpgradeCode="A1EA97FC-C7BE-43F1-8C3E-184F1848A270" Scope="perMachine">
+    <Launch Condition="Installed OR VersionNT64" Message="PopoTranslation requires 64-bit Windows." />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <!-- The x86 MSI uses the 32-bit Program Files directory for the x64 payload. -->
+    <StandardDirectory Id="ProgramFilesFolder">
+      <Directory Id="INSTALLFOLDER" Name="PopoTranslation" />
+    </StandardDirectory>
+    <Files Directory="INSTALLFOLDER" Include="$(var.PublishDir)\**">
+      <Exclude Files="$(var.PublishDir)\**settings.json" />
+      <Exclude Files="$(var.PublishDir)\**preferences.json" />
+      <Exclude Files="$(var.PublishDir)\secrets\**" />
+      <Exclude Files="$(var.PublishDir)\**.db*" />
+      <Exclude Files="$(var.PublishDir)\**.sqlite*" />
+      <Exclude Files="$(var.PublishDir)\**.log" />
+      <Exclude Files="$(var.PublishDir)\**.secrets.json" />
+      <Exclude Files="$(var.PublishDir)\**.env*" />
+      <Exclude Files="$(var.PublishDir)\**.pfx" />
+      <Exclude Files="$(var.PublishDir)\**.p12" />
+      <Exclude Files="$(var.PublishDir)\logs\**" />
+    </Files>
+  </Package>
+</Wix>

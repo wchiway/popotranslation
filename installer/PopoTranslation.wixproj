@@ -1,0 +1,16 @@
+<Project Sdk="WixToolset.Sdk/6.0.2">
+  <PropertyGroup>
+    <!-- The MSI contains file-only 32-bit components; the application payload is x64. -->
+    <InstallerPlatform>x86</InstallerPlatform>
+    <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildThisFileDirectory)..\bin\Release\net10.0-windows10.0.19041.0\win-x64\publish</PublishDir>
+    <InstallerVersion Condition="'$(InstallerVersion)' == ''">1.0.0</InstallerVersion>
+    <DefineConstants>$(DefineConstants);PublishDir=$(PublishDir);InstallerVersion=$(InstallerVersion)</DefineConstants>
+  </PropertyGroup>
+  <Target Name="CheckPublishDir" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(PublishDir)\popotranslation.exe')" Text="PublishDir must contain the x64 published popotranslation.exe: $(PublishDir)" />
+    <ItemGroup>
+      <PrivatePayload Include="$(PublishDir)\**\settings.json;$(PublishDir)\**\preferences.json;$(PublishDir)\**\secrets\**\*;$(PublishDir)\**\*.db;$(PublishDir)\**\*.db-*;$(PublishDir)\**\*.sqlite;$(PublishDir)\**\*.sqlite3;$(PublishDir)\**\*.log;$(PublishDir)\**\*.secrets.json;$(PublishDir)\**\.env;$(PublishDir)\**\.env.*;$(PublishDir)\**\*.pfx;$(PublishDir)\**\*.p12;$(PublishDir)\**\logs\**\*" />
+    </ItemGroup>
+    <Error Condition="'@(PrivatePayload)' != ''" Text="PublishDir contains private or forbidden files. Use a clean publish directory before building the installer." />
+  </Target>
+</Project>

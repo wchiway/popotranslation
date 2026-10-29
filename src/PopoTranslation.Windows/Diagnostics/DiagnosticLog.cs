@@ -1,4 +1,5 @@
 using System.Threading.Channels;
+using PopoTranslation.Windows.Storage;
 
 namespace PopoTranslation.Windows.Diagnostics;
 
@@ -23,8 +24,7 @@ public static class DiagnosticLog
     {
         try
         {
-            var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "PopoTranslation", "logs");
+            var directory = ApplicationPaths.Current.LogsDirectory;
             Directory.CreateDirectory(directory);
             var file = Path.Combine(directory, $"diagnostics-{DateTime.Now:yyyyMMdd-HHmmss-fff}-{Environment.ProcessId}.log");
             await using var stream = new FileStream(file, FileMode.CreateNew, FileAccess.Write, FileShare.ReadWrite);

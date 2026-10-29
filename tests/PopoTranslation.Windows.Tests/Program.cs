@@ -3,10 +3,38 @@ using PopoTranslation.Windows.Clipboard;
 using PopoTranslation.Windows.Editing;
 using PopoTranslation.Windows.Hotkeys;
 using PopoTranslation.Windows.Messaging;
+using PopoTranslation.Windows.Storage;
 
 static void Check(bool condition, string message)
 {
     if (!condition) throw new InvalidOperationException(message);
+}
+
+var pathTestRoot = Path.Combine(Path.GetTempPath(), $"popo-paths-{Guid.NewGuid():N}");
+try
+{
+    var profile = Path.Combine(pathTestRoot, "profile");
+    var local = Path.Combine(pathTestRoot, "local");
+    var home = Path.Combine(profile, ".PopoTranslation");
+    var legacy = Path.Combine(local, "PopoTranslation");
+    var paths = new ApplicationPaths(profile, local);
+    Check(paths.DataDirectory == home && paths.LogsDirectory == Path.Combine(home, "logs"), "首次使用应选择用户主目录");
+    Check(!Directory.Exists(home), "解析路径不应创建目录");
+    Directory.CreateDirectory(Path.Combine(legacy, "logs"));
+    File.WriteAllText(Path.Combine(legacy, "logs", "old.log"), "old");
+    paths = new ApplicationPaths(profile, local);
+    Check(paths.DataDirectory == legacy && paths.LogsDirectory == Path.Combine(legacy, "logs"), "旧目录仅含日志时仍需保留");
+    Directory.CreateDirectory(home);
+    File.WriteAllText(Path.Combine(home, "settings.json"), "new");
+    File.WriteAllText(Path.Combine(legacy, "settings.json"), "old");
+    paths = new ApplicationPaths(profile, local);
+    Check(paths.DataDirectory == legacy, "两个目录同时存在时旧数据优先");
+    Check(File.ReadAllText(Path.Combine(home, "settings.json")) == "new" &&
+          File.ReadAllText(Path.Combine(legacy, "settings.json")) == "old", "解析路径不得迁移或覆盖数据");
+}
+finally
+{
+    if (Directory.Exists(pathTestRoot)) Directory.Delete(pathTestRoot, recursive: true);
 }
 
 var snapshot = new EditorSnapshot((nint)7, 10, 15, "1,2,3", "重复重复", 0, 2, CaptureMode.Selection);

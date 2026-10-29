@@ -43,7 +43,7 @@ OpenAI Chat、OpenAI Responses、Anthropic Messages 和 Gemini 服务可在“�
 
 ## 诊断日志
 
-程序将输入捕获和剪贴板操作的诊断事件保存在 `%LOCALAPPDATA%\PopoTranslation\logs`。日志包含目标进程名、窗口句柄、时间、操作结果和错误类型，不包含输入文字、译文、剪贴板内容或 API Key。每个进程使用独立文件，单文件最多约 2 MiB；旧日志不会自动删除，可按需手动清理。日志写入失败不会影响翻译。
+程序默认将输入捕获和剪贴板操作的诊断事件保存在 `%USERPROFILE%\.PopoTranslation\logs`。已有旧版数据目录的用户继续使用 `%LOCALAPPDATA%\PopoTranslation\logs`。日志包含目标进程名、窗口句柄、时间、操作结果和错误类型，不包含输入文字、译文、剪贴板内容或 API Key。每个进程使用独立文件，单文件最多约 2 MiB；旧日志不会自动删除，可按需手动清理。日志写入失败不会影响翻译。
 
 ## 限制
 
@@ -51,8 +51,8 @@ OpenAI Chat、OpenAI Responses、Anthropic Messages 和 Gemini 服务可在“�
 
 程序写入的临时标记和译文会请求 Windows 不将其加入剪贴板历史或同步到其他设备。通过目标应用复制的原文不受该标记控制，仍可能出现在系统或第三方剪贴板历史中；既有历史记录不会自动删除。
 
-翻译历史和缓存保存在本机 `%LOCALAPPDATA%\PopoTranslation\translations.db` SQLite 数据库中，包含明文原文和译文；历史页面显示最近 50 条记录，可分别清空历史和缓存；数据不会自动过期或限量，清空也不保证对磁盘残留进行安全擦除。缓存仅在文本及相关翻译配置相同时复用，服务端模型更新不会自动使旧缓存失效，可手动清空缓存。工具不会自动发送消息或执行原文中的指令。API Key 和个人配置仅保存在本机，不进入仓库。
+翻译历史和缓存默认保存在本机 `%USERPROFILE%\.PopoTranslation\translations.db` SQLite 数据库中；若旧版数据目录 `%LOCALAPPDATA%\PopoTranslation` 已存在，则继续使用该目录。数据库包含明文原文和译文；历史页面显示最近 50 条记录，可分别清空历史和缓存；数据不会自动过期或限量，清空也不保证对磁盘残留进行安全擦除。缓存仅在文本及相关翻译配置相同时复用，服务端模型更新不会自动使旧缓存失效，可手动清空缓存。工具不会自动发送消息或执行原文中的指令。API Key 和个人配置仅保存在本机，不进入仓库。
 
 ## 开发
 
-构建、测试和已知限制见 [docs/development.md](docs/development.md)；模块关系见 [docs/architecture.md](docs/architecture.md)。
+构建、测试和已知限制见 [docs/development.md](docs/development.md)；安装包构建基础见 [docs/installation.md](docs/installation.md)；模块关系见 [docs/architecture.md](docs/architecture.md)。

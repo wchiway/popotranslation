@@ -15,6 +15,7 @@ using PopoTranslation.Windows.Editing;
 using PopoTranslation.Windows.Diagnostics;
 using PopoTranslation.Windows.Hotkeys;
 using PopoTranslation.Windows.Messaging;
+using PopoTranslation.Windows.Storage;
 using PopoTranslation.Windows.Tray;
 
 namespace popotranslation.Services;
@@ -66,7 +67,7 @@ internal sealed class ApplicationController : IDisposable
         _openSettings = openSettings;
         _exit = exit;
         _iconPath = iconPath;
-        var directory = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PopoTranslation");
+        var directory = ApplicationPaths.Current.DataDirectory;
         _settingsStore = new JsonSettingsStore(System.IO.Path.Combine(directory, "settings.json"));
         _preferencesStore = new JsonApplicationPreferencesStore(System.IO.Path.Combine(directory, "preferences.json"));
         _page.ApplicationSettingsChanged += OnApplicationSettingsChanged;
