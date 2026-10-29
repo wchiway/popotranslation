@@ -55,4 +55,4 @@ OpenAI Chat、OpenAI Responses、Anthropic Messages 和 Gemini 服务可在“�
 
 ## 开发
 
-构建、测试和已知限制见 [docs/development.md](docs/development.md)；EXE 安装包构建方法见 [docs/installation.md](docs/installation.md)；模块关系见 [docs/architecture.md](docs/architecture.md)。
+构建、测试和已知限制见 [docs/development.md](docs/development.md)；EXE 安装包构建方法见 [docs/installation.md](docs/installation.md)；GitHub Actions 测试与发布方式见 [docs/ci.md](docs/ci.md)；模块关系见 [docs/architecture.md](docs/architecture.md)。

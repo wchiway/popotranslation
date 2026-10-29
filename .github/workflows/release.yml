@@ -1,0 +1,190 @@
+name: Build and release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version without v, e.g. 1.2.3 or 1.2.3-rc.1'
+        required: true
+        type: string
+      channel:
+        description: 'Release channel'
+        required: true
+        type: choice
+        options:
+          - release
+          - prerelease
+      publish:
+        description: 'Create and publish the GitHub release after a successful build'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.repository }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+    permissions:
+      contents: read
+
+  build:
+    needs: test
+    runs-on: windows-2025-vs2026
+    steps:
+      - name: Validate request
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+          PUBLISH: ${{ inputs.publish }}
+          SOURCE_REF: ${{ github.ref }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:VERSION.Length -gt 100 -or $env:VERSION -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$') {
+            throw 'Version must be a three-part SemVer version without build metadata or a v prefix.'
+          }
+          $parts = $env:VERSION.Split('-', 2)[0].Split('.')
+          foreach ($part in $parts) {
+            $number = 0
+            if (-not [int]::TryParse($part, [ref]$number) -or $number -gt 65535) { throw 'Version components must fit in 0..65535.' }
+          }
+          $suffix = $Matches[4]
+          if ($suffix) {
+            foreach ($identifier in $suffix.Split('.')) {
+              if ($identifier -cmatch '^[0-9]+$' -and $identifier.Length -gt 1 -and $identifier[0] -eq '0') { throw 'Numeric prerelease identifiers cannot have leading zeroes.' }
+            }
+          }
+          if ($env:CHANNEL -ceq 'release' -and $suffix) { throw 'A release version cannot have a prerelease suffix.' }
+          if ($env:CHANNEL -ceq 'prerelease' -and -not $suffix) { throw 'A prerelease version must have a prerelease suffix.' }
+          if ($env:CHANNEL -cnotin @('release', 'prerelease')) { throw 'Unknown release channel.' }
+          if ($env:PUBLISH -eq 'true' -and $env:SOURCE_REF -cne 'refs/heads/main') { throw 'Publishing is only allowed from main.' }
+          "APP_VERSION=$($parts -join '.')" >> $env:GITHUB_ENV
+
+      - name: Checkout selected commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@d4c94342e560b34958eacfc5d055d21461ed1c5d # v5.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Locate build dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path -LiteralPath $vswhere)) { throw 'vswhere is missing.' }
+          $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0 -or -not $msbuild -or -not (Test-Path -LiteralPath $msbuild)) { throw 'Visual Studio MSBuild is missing.' }
+          if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { throw '.NET SDK is missing.' }
+          "MSBUILD_PATH=$msbuild" >> $env:GITHUB_ENV
+
+      # Official download and verification instructions checked 2026-10-29:
+      # https://jrsoftware.org/isdl.php and https://jrsoftware.org/isdl-verify.php
+      - name: Download and verify Inno Setup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $download = Join-Path $env:RUNNER_TEMP 'inno-download'
+          $install = Join-Path $env:RUNNER_TEMP 'inno-compiler'
+          if ((Test-Path -LiteralPath $download) -or (Test-Path -LiteralPath $install)) { throw 'Inno Setup directories already exist.' }
+          New-Item -ItemType Directory -Path $download, $install | Out-Null
+          $installer = Join-Path $download 'innosetup-7.1.0-x64.exe'
+          Invoke-WebRequest -Uri 'https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe' -OutFile $installer
+          $signature = Get-AuthenticodeSignature -LiteralPath $installer
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch '(^|,\s*)CN=Pyrsys B\.V\.(,|$)') { throw 'Inno Setup Authenticode verification failed.' }
+          $process = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/PORTABLE=1', '/CURRENTUSER', '/NOICONS', '/TASKS=', "/DIR=`"$install`"") -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Inno Setup installation failed.' }
+          $iscc = Join-Path $install 'ISCC.exe'
+          if (-not (Test-Path -LiteralPath $iscc)) { throw 'ISCC.exe is missing.' }
+          $compilerVersion = & $iscc --version
+          if ($LASTEXITCODE -ne 0 -or "$compilerVersion" -notmatch '\b7\.1\.0\b') { throw 'Unexpected Inno Setup compiler version.' }
+          "ISCC_PATH=$iscc" >> $env:GITHUB_ENV
+
+      - name: Publish x64 self-contained application and build installer
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $publish = Join-Path $env:RUNNER_TEMP 'popo-publish'
+          $output = Join-Path $env:RUNNER_TEMP 'popo-setup'
+          $artifacts = Join-Path $env:RUNNER_TEMP 'popo-artifacts'
+          foreach ($path in @($publish, $output, $artifacts)) {
+            if (Test-Path -LiteralPath $path) { throw "Output path already exists: $path" }
+          }
+          New-Item -ItemType Directory -Path $output, $artifacts | Out-Null
+          & $env:MSBUILD_PATH popotranslation.csproj -restore -target:Publish -property:Configuration=Release -property:Platform=x64 -property:WindowsAppSDKSelfContained=true "-property:Version=$env:VERSION" "-property:PublishDir=$publish\"
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $publish 'popotranslation.exe'))) { throw 'Application publish failed.' }
+          $unsafe = Get-ChildItem -LiteralPath $publish -Recurse -Force | Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $_.Name -match '(?i)^(settings\.json|preferences\.json|\.env($|\.)|logs$|secrets$)|\.(db|sqlite|sqlite3)(-|$)|\.log$|\.secrets\.json$|\.(pfx|p12)$' }
+          if ($unsafe) { throw 'Publish output contains potentially sensitive files or reparse points.' }
+          & $env:ISCC_PATH /NI "/DPublishDir=$publish" "/DAppVersion=$env:APP_VERSION" "/O$output" installer/PopoTranslation.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed.' }
+          $setup = Join-Path $output "PopoTranslation-Setup-$env:APP_VERSION-x64.exe"
+          if (-not (Test-Path -LiteralPath $setup)) { throw 'Expected installer was not generated.' }
+          Copy-Item -LiteralPath $setup -Destination (Join-Path $artifacts "PopoTranslation-Setup-$env:VERSION-x64.exe")
+          Compress-Archive -Path (Join-Path $publish '*') -DestinationPath (Join-Path $artifacts "PopoTranslation-$env:VERSION-win-x64.zip")
+          Get-ChildItem -LiteralPath $artifacts -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($_.Path))" } | Set-Content -LiteralPath (Join-Path $artifacts 'SHA256SUMS.txt') -Encoding utf8
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-files
+          path: ${{ runner.temp }}/popo-artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    if: ${{ inputs.publish && github.ref == 'refs/heads/main' }}
+    needs: build
+    runs-on: windows-2025
+    permissions:
+      contents: write
+    steps:
+      - name: Download tested build
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: release-files
+          path: release-files
+
+      - name: Create new tag and publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = "v$env:VERSION"
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+          $base = "https://api.github.com/repos/$env:GH_REPO"
+          foreach ($endpoint in @("git/ref/tags/$tag", "releases/tags/$tag")) {
+            try {
+              Invoke-RestMethod -Uri "$base/$endpoint" -Headers $headers | Out-Null
+              throw "Tag or release already exists: $tag"
+            } catch {
+              if ($_.Exception.Response.StatusCode.value__ -ne 404) { throw }
+            }
+          }
+          # GitHub rejects an existing ref atomically, including a competing run.
+          $body = @{ ref = "refs/tags/$tag"; sha = $env:COMMIT_SHA } | ConvertTo-Json -Compress
+          Invoke-RestMethod -Method Post -Uri "$base/git/refs" -Headers $headers -ContentType 'application/json' -Body $body | Out-Null
+          $ref = Invoke-RestMethod -Uri "$base/git/ref/tags/$tag" -Headers $headers
+          if ($ref.object.type -cne 'commit' -or $ref.object.sha -cne $env:COMMIT_SHA) { throw 'Tag does not point to the tested commit.' }
+          $files = @(Get-ChildItem -LiteralPath 'release-files' -File | ForEach-Object { $_.FullName })
+          if ($files.Count -ne 3) { throw 'Expected installer, application archive, and checksums.' }
+          $notes = 'The installer displays the numeric base version without the prerelease suffix. The application and installer are not Authenticode-signed. Automated tests and build do not replace installation, upgrade, uninstall, and runtime checks on clean target machines.'
+          $arguments = @('release', 'create', $tag) + $files + @('--verify-tag', '--title', $tag, '--notes', $notes, '--generate-notes')
+          if ($env:CHANNEL -ceq 'prerelease') { $arguments += '--prerelease' }
+          & gh @arguments
+          if ($LASTEXITCODE -ne 0) { throw 'Release creation failed; the new tag or a draft release may remain and must be inspected manually.' }

@@ -1,0 +1,42 @@
+name: Build and test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-2025-vs2026
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Set up Visual Studio MSBuild
+        uses: microsoft/setup-msbuild@v3
+
+      - name: Build solution
+        run: msbuild popotranslation.slnx -restore -target:Build -property:Configuration=Debug -property:Platform=x64
+
+      - name: Test core
+        run: dotnet test tests/PopoTranslation.Core.Tests/PopoTranslation.Core.Tests.csproj --configuration Debug
+
+      - name: Test infrastructure
+        run: dotnet test tests/PopoTranslation.Infrastructure.Tests/PopoTranslation.Infrastructure.Tests.csproj --configuration Debug
+
+      - name: Test providers
+        run: dotnet test tests/PopoTranslation.Providers.Tests/PopoTranslation.Providers.Tests.csproj --configuration Debug
+
+      - name: Run Windows checks
+        run: dotnet run --project tests/PopoTranslation.Windows.Tests/PopoTranslation.Windows.Tests.csproj --configuration Debug
