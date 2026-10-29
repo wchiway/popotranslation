@@ -25,6 +25,12 @@ appsettings.*.Local.json
 *.secrets.json
 *.pfx
 *.p12
+*.pem
+*.key
+settings.json
+preferences.json
+secrets/
+translations.db*
 
 # Runtime data
 logs/

@@ -9,23 +9,26 @@
 - Visual Studio 2026（或包含 Windows App SDK / WinUI 组件的兼容构建工具），用于 WinUI XAML 构建。
 - 项目根目录的 `NuGet.Config` 固定使用 `https://api.nuget.org/v3/index.json`，不依赖机器上的 Visual Studio 离线源。
 - 项目使用 Windows App SDK `2.6.4` 和 Windows SDK BuildTools `10.0.26100.4654`，版本写在根项目文件中；升级前应查证兼容性。
-- 根项目设置 `WindowsPackageType=None`，直接运行构建出的 `.exe` 时由 Windows App SDK Bootstrap 初始化运行时；当前开发机可使用已安装的 Windows App Runtime 2.6.4。
+- 根项目设置 `WindowsPackageType=None`，直接运行框架依赖的 `.exe` 时需要匹配的 Windows App Runtime。自包含部署的说明见 [安装包构建](installation.md)。
 
 ## 构建
 
 使用 Visual Studio 的 MSBuild 构建 WinUI 项目：
 
 ```powershell
-$msbuild = "D:\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe"
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+$msbuild = & $vswhere -latest -products '*' -requires Microsoft.Component.MSBuild -find 'MSBuild\Current\Bin\MSBuild.exe' | Select-Object -First 1
+if (-not $msbuild) { throw '找不到 Visual Studio MSBuild' }
 & $msbuild popotranslation.slnx -restore -target:Build -property:Configuration=Debug -property:Platform=x64
 ```
 
 如果 .NET SDK 的 NuGet 缓存所在磁盘空间不足，可以只为当前进程指定缓存目录：
 
 ```powershell
-$env:NUGET_PACKAGES = 'D:\popotranslation-nuget\packages'
-$env:NUGET_HTTP_CACHE_PATH = 'D:\popotranslation-nuget\http'
-$env:NUGET_SCRATCH = 'D:\popotranslation-nuget\scratch'
+$cacheRoot = Join-Path $env:TEMP 'PopoTranslation-NuGet'
+$env:NUGET_PACKAGES = Join-Path $cacheRoot 'packages'
+$env:NUGET_HTTP_CACHE_PATH = Join-Path $cacheRoot 'http'
+$env:NUGET_SCRATCH = Join-Path $cacheRoot 'scratch'
 ```
 
 这三个变量只影响当前 PowerShell 进程，不会修改系统环境变量。多个并发构建必须共用同一组缓存和临时目录。
@@ -34,7 +37,7 @@ $env:NUGET_SCRATCH = 'D:\popotranslation-nuget\scratch'
 
 ## 运行
 
-在 Visual Studio 中打开 `popotranslation.slnx`，选择 `x64`，启动 `popotranslation` 项目。程序启动后从托盘打开设置，填写服务类型、模型、API Key、目标语言，保存后在输入框中连续按三次空格。备用选区/整框快捷键默认是 `Ctrl+Alt+F9` / `Ctrl+Alt+F10`。
+在 Visual Studio 中打开 `popotranslation.slnx`，选择 `x64`，启动 `popotranslation` 项目。程序启动后从托盘打开设置，填写服务类型、模型、API Key、目标语言，保存后在输入框中连续按三次空格。可在设置页通过按键录制备用选区和整框快捷键。
 
 首次运行前应确保：
 

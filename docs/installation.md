@@ -15,8 +15,11 @@
 在仓库根目录使用 Visual Studio MSBuild 发布到全新、独立的目录，按本机情况修改路径。MSBuild 还会使用项目既有的中间输出目录，因此请先确认这些目录可用于构建。
 
 ```powershell
-$msbuild = 'D:\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe'
-$publish = 'F:\Builds\PopoTranslation\publish'
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+$msbuild = & $vswhere -latest -products '*' -requires Microsoft.Component.MSBuild -find 'MSBuild\Current\Bin\MSBuild.exe' | Select-Object -First 1
+if (-not $msbuild) { throw '找不到 Visual Studio MSBuild' }
+$buildRoot = Join-Path $env:TEMP 'PopoTranslation-build'
+$publish = Join-Path $buildRoot 'publish'
 if (Test-Path -LiteralPath $publish) { throw '发布目录已存在，请选择新目录' }
 & $msbuild .\popotranslation.csproj -restore -target:Publish -property:Configuration=Release -property:Platform=x64 -property:WindowsAppSDKSelfContained=true "-property:PublishDir=$publish\"
 if ($LASTEXITCODE -ne 0) { throw '发布失败' }
@@ -27,8 +30,8 @@ if ($LASTEXITCODE -ne 0) { throw '发布失败' }
 使用新建的空输出目录，避免覆盖现有安装包。版本号应随发行递增；每次打包前检查输出文件不存在。以下例子使用独立编译器位置，按实际路径修改。
 
 ```powershell
-$iscc = 'F:\Tools\InnoSetup\ISCC.exe'
-$output = 'F:\Builds\PopoTranslation\setup-output'
+$iscc = '<Inno Setup 安装目录>\ISCC.exe' # 替换为本机编译器路径
+$output = Join-Path $buildRoot 'setup-output'
 $version = '1.0.0'
 if (Test-Path -LiteralPath $output) { throw '输出目录已存在，请选择新目录' }
 New-Item -ItemType Directory -Path $output | Out-Null
