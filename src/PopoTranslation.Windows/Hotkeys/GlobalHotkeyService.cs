@@ -25,6 +25,7 @@ public sealed class GlobalHotkeyService : IDisposable
     private int _nextId = 1;
     private bool _disposed;
     public event Action<HotkeyAction>? Triggered;
+    public event Action<HotkeyAction, Hotkey>? TriggeredWithHotkey;
 
     public GlobalHotkeyService(NativeMessageWindow window, IHotkeyNative? native = null)
     {
@@ -123,7 +124,14 @@ public sealed class GlobalHotkeyService : IDisposable
     {
         if (message != WmHotkey || _disposed) return;
         foreach (var pair in _registrations)
-            if (pair.Value.Id == (int)wParam) { Triggered?.Invoke(pair.Key); break; }
+            if (pair.Value.Id == (int)wParam)
+            {
+                var action = pair.Key;
+                var hotkey = pair.Value.Hotkey;
+                TriggeredWithHotkey?.Invoke(action, hotkey);
+                Triggered?.Invoke(action);
+                break;
+            }
     }
 
     public void Dispose()

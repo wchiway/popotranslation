@@ -87,11 +87,11 @@
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                             <TextBox x:Name="StyleBox" Header="翻译风格（可选）" PlaceholderText="例如：自然、简洁"
                                      AutomationProperties.Name="翻译风格" />
-                            <TextBox x:Name="SelectionHotkeyBox" Header="选区翻译（备用快捷键）" PlaceholderText="例如：Ctrl+Alt+F9"
-                                     AutomationProperties.Name="选区翻译备用快捷键" />
-                            <TextBox x:Name="WholeHotkeyBox" Header="整框翻译（备用快捷键）" PlaceholderText="例如：Ctrl+Alt+F10"
-                                     AutomationProperties.Name="整框翻译备用快捷键" />
-                            <TextBlock Text="备用快捷键格式：Ctrl、Alt 或 Shift 加一个字母、数字或 F1–F24（F12 除外）。连续三次空格始终启用。"
+                            <TextBox x:Name="SelectionHotkeyBox" Header="选区翻译（备用快捷键）" IsReadOnly="True"
+                                     AutomationProperties.Name="选区翻译备用快捷键" AutomationProperties.HelpText="聚焦后按下快捷键组合；按 Tab 移动焦点。" />
+                            <TextBox x:Name="WholeHotkeyBox" Header="整框翻译（备用快捷键）" IsReadOnly="True"
+                                     AutomationProperties.Name="整框翻译备用快捷键" AutomationProperties.HelpText="聚焦后按下快捷键组合；按 Tab 移动焦点。" />
+                            <TextBlock Text="聚焦快捷键框后按下组合：Ctrl、Alt 或 Shift 加字母、数字或 F1–F24（F12 除外）。两个快捷键不能相同。连续三次空格始终启用。"
                                        TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         </StackPanel>
                     </Border>

@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -104,7 +105,7 @@ internal sealed class ApplicationController : IDisposable
         {
             _native = new NativeMessageWindow();
             _hotkeys = new GlobalHotkeyService(_native);
-            _hotkeys.Triggered += OnHotkey;
+            _hotkeys.TriggeredWithHotkey += OnRegisteredHotkey;
             try
             {
                 _spaceHotkey = new SpaceSequenceHotkeyService(_native);
@@ -478,6 +479,37 @@ internal sealed class ApplicationController : IDisposable
         }
         catch (OperationCanceledException) { return new(false, "连接测试超时，请检查服务配置。"); }
         catch { return new(false, "连接测试失败，请检查服务配置和密钥。"); }
+    }
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(nint window, out uint processId);
+
+    private void OnRegisteredHotkey(HotkeyAction action, Hotkey hotkey)
+    {
+        var foreground = FocusedEditorReader.GetForegroundWindowAtTrigger();
+        GetWindowThreadProcessId(foreground, out var processId);
+        if (foreground != 0 && processId == (uint)Environment.ProcessId)
+        {
+            _dispatcher.TryEnqueue(() =>
+            {
+                if (!_disposed && foreground == FocusedEditorReader.GetForegroundWindowAtTrigger() && _page.IsRecordingShortcut)
+                    _page.CaptureRegisteredShortcut(FormatHotkey(hotkey));
+            });
+            return;
+        }
+        OnHotkey(action);
+    }
+
+    private static string FormatHotkey(Hotkey hotkey)
+    {
+        var parts = new System.Collections.Generic.List<string>();
+        if ((hotkey.Modifiers & HotkeyModifiers.Control) != 0) parts.Add("Ctrl");
+        if ((hotkey.Modifiers & HotkeyModifiers.Alt) != 0) parts.Add("Alt");
+        if ((hotkey.Modifiers & HotkeyModifiers.Shift) != 0) parts.Add("Shift");
+        if ((hotkey.Modifiers & HotkeyModifiers.Windows) != 0) parts.Add("Win");
+        var key = hotkey.VirtualKey;
+        parts.Add(key is >= 0x70 and <= 0x87 ? $"F{key - 0x70 + 1}" : ((char)key).ToString());
+        return string.Join("+", parts);
     }
 
     private void OnHotkey(HotkeyAction action)

@@ -6,7 +6,11 @@ using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Input;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.System;
+using Windows.UI.Core;
 using PopoTranslation.Core;
 
 namespace popotranslation.Views;
@@ -134,7 +138,10 @@ public sealed partial class SettingsPage : Page
             if (!string.IsNullOrEmpty(value) && UiLocalization.English.ContainsKey(value)) _localizedProperties.Add((setter, value));
         }
         if (node is DependencyObject dependency)
+        {
             Add(AutomationProperties.GetName(dependency), value => AutomationProperties.SetName(dependency, value));
+            Add(AutomationProperties.GetHelpText(dependency), value => AutomationProperties.SetHelpText(dependency, value));
+        }
         switch (node)
         {
             case NavigationView navigation:
@@ -207,6 +214,8 @@ public sealed partial class SettingsPage : Page
     {
         InitializeComponent();
         CaptureLocalizedProperties(Content);
+        SelectionHotkeyBox.AddHandler(UIElement.PreviewKeyDownEvent, new KeyEventHandler(Hotkey_KeyDown), true);
+        WholeHotkeyBox.AddHandler(UIElement.PreviewKeyDownEvent, new KeyEventHandler(Hotkey_KeyDown), true);
         Navigation.SelectionChanged += Navigation_SelectionChanged;
         Navigation.SelectedItem = ServiceNavigation;
         ShowPage("service");
@@ -878,6 +887,72 @@ public sealed partial class SettingsPage : Page
     }
 
     private static string? Optional(string value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    // The controller must also check that this window is foreground before forwarding a registered shortcut.
+    private TextBox? RecordingHotkeyBox => TranslationPage.Visibility == Visibility.Visible && !_busy
+        ? SelectionHotkeyBox.FocusState != FocusState.Unfocused ? SelectionHotkeyBox
+            : WholeHotkeyBox.FocusState != FocusState.Unfocused ? WholeHotkeyBox : null
+        : null;
+
+    public bool IsRecordingShortcut => RecordingHotkeyBox is not null;
+
+    public bool CaptureRegisteredShortcut(string shortcut)
+    {
+        var box = RecordingHotkeyBox;
+        if (box is null) return false;
+        if (TryNormalizeHotkey(shortcut, out var normalized)) SetRecordedHotkey(box, normalized);
+        else SetStatus("快捷键须包含 Ctrl、Alt 或 Shift 和一个字母、数字或 F1–F24 功能键；F12 及 Win 组合不可用。", true);
+        return true;
+    }
+
+    private static bool IsKeyDown(VirtualKey key) =>
+        (InputKeyboardSource.GetKeyStateForCurrentThread(key) & CoreVirtualKeyStates.Down) != 0;
+
+    private void Hotkey_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (sender is not TextBox box || RecordingHotkeyBox != box) return;
+        var key = e.OriginalKey;
+        var ctrl = IsKeyDown(VirtualKey.Control);
+        var alt = IsKeyDown(VirtualKey.Menu);
+        var shift = IsKeyDown(VirtualKey.Shift);
+        var win = IsKeyDown(VirtualKey.LeftWindows) || IsKeyDown(VirtualKey.RightWindows);
+        // Preserve normal Tab and Shift+Tab navigation.
+        if (key == VirtualKey.Tab && !ctrl && !alt && !win) return;
+        e.Handled = true;
+        if (key is VirtualKey.Control or VirtualKey.LeftControl or VirtualKey.RightControl or
+            VirtualKey.Menu or VirtualKey.LeftMenu or VirtualKey.RightMenu or
+            VirtualKey.Shift or VirtualKey.LeftShift or VirtualKey.RightShift or
+            VirtualKey.LeftWindows or VirtualKey.RightWindows) return;
+
+        var code = (int)key;
+        var keyName = code is >= 0x41 and <= 0x5A or >= 0x30 and <= 0x39
+            ? ((char)code).ToString()
+            : code is >= 0x70 and <= 0x87 ? $"F{code - 0x6F}" : string.Empty;
+        var parts = new List<string>();
+        if (ctrl) parts.Add("Ctrl");
+        if (alt) parts.Add("Alt");
+        if (shift) parts.Add("Shift");
+        if (win) parts.Add("Win");
+        parts.Add(keyName);
+        if (!TryNormalizeHotkey(string.Join("+", parts), out var normalized))
+        {
+            SetStatus("快捷键须包含 Ctrl、Alt 或 Shift 和一个字母、数字或 F1–F24 功能键；F12 及 Win 组合不可用。", true);
+            return;
+        }
+        SetRecordedHotkey(box, normalized);
+    }
+
+    private void SetRecordedHotkey(TextBox box, string normalized)
+    {
+        var other = box == SelectionHotkeyBox ? WholeHotkeyBox : SelectionHotkeyBox;
+        if (TryNormalizeHotkey(other.Text, out var otherShortcut) && normalized == otherShortcut)
+        {
+            SetStatus("两个翻译快捷键不能相同。", true);
+            return;
+        }
+        box.Text = normalized;
+        SetStatus("快捷键已录制；保存设置后生效。");
+    }
 
     private static bool TryNormalizeHotkey(string text, out string normalized)
     {

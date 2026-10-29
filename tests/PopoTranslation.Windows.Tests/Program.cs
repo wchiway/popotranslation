@@ -220,9 +220,19 @@ using (var window = new NativeMessageWindow())
     var original = new Hotkey(HotkeyModifiers.Control | HotkeyModifiers.Shift, 0x54);
     Check(hotkeys.Configure(HotkeyAction.Selection, original).Success, "初始注册失败");
     var originalId = native.Active.Single();
+    var received = new List<(HotkeyAction Action, Hotkey Hotkey)>();
+    var legacy = new List<HotkeyAction>();
+    hotkeys.TriggeredWithHotkey += (action, hotkey) => received.Add((action, hotkey));
+    hotkeys.Triggered += action => legacy.Add(action);
+    var onMessage = typeof(GlobalHotkeyService).GetMethod("OnMessage", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+    void Trigger(int id) => window.Invoke(() => { onMessage.Invoke(hotkeys, [0x0312u, (nint)id, (nint)0]); return 0; });
+    Trigger(originalId);
+    Check(received.SequenceEqual([(HotkeyAction.Selection, original)]) && legacy.SequenceEqual([HotkeyAction.Selection]), "触发事件应携带实际组合并兼容旧事件");
     native.Fail = true;
     Check(!hotkeys.Configure(HotkeyAction.Selection, new(HotkeyModifiers.Alt, 0x54)).Success, "冲突必须报告失败");
     Check(native.Active.SetEquals([originalId]), "冲突时必须保留原注册");
+    Trigger(originalId);
+    Check(received.Last() == (HotkeyAction.Selection, original), "注册失败后事件必须报告原组合");
     native.Fail = false;
     Check(hotkeys.Configure(HotkeyAction.Selection, new(HotkeyModifiers.Alt, 0x54)).Success, "重新注册失败");
     Check(native.Active.Count == 1 && !native.Active.Contains(originalId), "成功更新后必须释放旧注册");
@@ -230,11 +240,25 @@ using (var window = new NativeMessageWindow())
     Check(hotkeys.ConfigurePair(original, other).Success, "成对注册失败");
     var ids = native.Active.ToHashSet();
     Check(hotkeys.ConfigurePair(other, original).Success && native.Active.SetEquals(ids), "互换应复用注册");
+    var originalPairId = ids.First();
+    // Capture each ID's meaning before the swap through a second swap.
+    Check(hotkeys.ConfigurePair(original, other).Success, "应能再次互换");
+    Trigger(originalPairId);
+    var beforeSwap = received.Last();
+    Check(hotkeys.ConfigurePair(other, original).Success, "应能恢复互换状态");
+    Trigger(originalPairId);
+    var afterSwap = received.Last();
+    Check(beforeSwap.Hotkey == afterSwap.Hotkey && beforeSwap.Action != afterSwap.Action, "互换后同一注册 ID 应报告新的动作和原组合");
     native.FailKey = 0x5A;
     Check(!hotkeys.ConfigurePair(new(HotkeyModifiers.Alt, 0x58), new(HotkeyModifiers.Alt, 0x5A)).Success,
         "第二键冲突必须失败");
     Check(native.Active.SetEquals(ids), "第二键冲突必须保留之前组合并撤回新增注册");
+    Trigger(originalPairId);
+    Check(received.Last() == afterSwap, "成对注册失败后事件应报告先前的组合");
+    var eventsBeforeClear = received.Count;
     Check(hotkeys.Clear() && native.Active.Count == 0, "清除必须释放全部注册");
+    Trigger(originalPairId);
+    Check(received.Count == eventsBeforeClear, "清除后旧消息不得触发事件");
     Check(hotkeys.ConfigurePair(original, other).Success, "清除后应允许重新注册");
     hotkeys.Dispose();
     Check(native.Active.Count == 0, "退出时必须释放注册");
