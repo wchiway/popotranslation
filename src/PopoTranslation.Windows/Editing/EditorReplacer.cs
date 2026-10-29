@@ -16,7 +16,8 @@ public interface IReplacementBackend
 public static class EditorReplacer
 {
     public static ReplacementResult Replace(EditorSnapshot snapshot, string translatedText,
-        IReplacementBackend backend, CancellationToken cancellationToken = default, Func<bool>? isCurrent = null)
+        IReplacementBackend backend, CancellationToken cancellationToken = default, Func<bool>? isCurrent = null,
+        bool confirmAfterReplacement = true)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentNullException.ThrowIfNull(translatedText);
@@ -41,6 +42,8 @@ public static class EditorReplacer
                 return new(ReplacementStatus.ManualApply, "替换未发送，请手动应用。");
             if (submission != ReplacementSubmission.Submitted)
                 return new(ReplacementStatus.OutcomeUnknown, "无法确定替换是否已发送，请先检查目标控件。");
+            if (!confirmAfterReplacement)
+                return new(ReplacementStatus.SubmittedUnconfirmed, "已提交替换，未检查控件最终内容。");
             try
             {
                 return backend.ConfirmValue(translatedText)

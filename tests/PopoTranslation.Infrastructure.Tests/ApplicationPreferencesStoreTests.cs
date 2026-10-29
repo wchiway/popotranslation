@@ -18,16 +18,24 @@ public class ApplicationPreferencesStoreTests : IDisposable
         Directory.CreateDirectory(_directory);
         await File.WriteAllTextAsync(PreferencesPath, "{\"Theme\":\"Dark\"}", TestContext.Current.CancellationToken);
         Assert.Equal(new ApplicationPreferences(Theme: ApplicationTheme.Dark), await store.LoadAsync(TestContext.Current.CancellationToken));
+        const string oldJson = "{\"Language\":\"English\",\"Theme\":\"Light\",\"NotificationsEnabled\":false}";
+        await File.WriteAllTextAsync(PreferencesPath, oldJson, TestContext.Current.CancellationToken);
+        var oldPreferences = await store.LoadAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(new ApplicationPreferences(InterfaceLanguage.English, ApplicationTheme.Light, false, true), oldPreferences);
+        Assert.Equal(oldJson, await File.ReadAllTextAsync(PreferencesPath, TestContext.Current.CancellationToken));
+        await store.SaveAsync(oldPreferences with { VerifyReplacement = false }, TestContext.Current.CancellationToken);
+        Assert.Equal(oldPreferences with { VerifyReplacement = false }, await store.LoadAsync(TestContext.Current.CancellationToken));
     }
 
     [Theory]
-    [InlineData(InterfaceLanguage.SimplifiedChinese, ApplicationTheme.System, true)]
-    [InlineData(InterfaceLanguage.English, ApplicationTheme.Light, false)]
-    [InlineData(InterfaceLanguage.English, ApplicationTheme.Dark, true)]
-    public async Task PreferencesRoundTrip(InterfaceLanguage language, ApplicationTheme theme, bool notifications)
+    [InlineData(InterfaceLanguage.SimplifiedChinese, ApplicationTheme.System, true, false)]
+    [InlineData(InterfaceLanguage.English, ApplicationTheme.Light, false, true)]
+    [InlineData(InterfaceLanguage.English, ApplicationTheme.Dark, true, true)]
+    [InlineData(InterfaceLanguage.English, ApplicationTheme.Dark, false, false)]
+    public async Task PreferencesRoundTrip(InterfaceLanguage language, ApplicationTheme theme, bool notifications, bool verifyReplacement)
     {
         var store = new JsonApplicationPreferencesStore(PreferencesPath);
-        var preferences = new ApplicationPreferences(language, theme, notifications);
+        var preferences = new ApplicationPreferences(language, theme, notifications, verifyReplacement);
         await store.SaveAsync(preferences, TestContext.Current.CancellationToken);
         Assert.Equal(preferences, await store.LoadAsync(TestContext.Current.CancellationToken));
     }
@@ -55,6 +63,8 @@ public class ApplicationPreferencesStoreTests : IDisposable
     [InlineData("{\"Language\":\"French\"}")]
     [InlineData("{\"Theme\":42}")]
     [InlineData("{\"NotificationsEnabled\":null}")]
+    [InlineData("{\"VerifyReplacement\":null}")]
+    [InlineData("{\"VerifyReplacement\":\"false\"}")]
     [InlineData("{\"FutureSetting\":true}")]
     public async Task InvalidPreferencesCannotBeOverwritten(string json)
     {

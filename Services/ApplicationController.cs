@@ -34,6 +34,7 @@ internal sealed class ApplicationController : IDisposable
     private readonly SemaphoreSlim _preferencesGate = new(1, 1);
     private ApplicationPreferences _preferences = new();
     private volatile bool _notificationsEnabled = true;
+    private volatile bool _verifyReplacement = true;
     private bool _preferencesUnavailable;
     private long _preferencesVersion;
     private readonly WindowsSecretStore _secrets;
@@ -586,6 +587,7 @@ internal sealed class ApplicationController : IDisposable
             var translatedText = TranslationLineBreaks.ToWindows(result.Text);
             _ = SaveTranslationAsync(cacheContext, translatedText, provider.CacheHit, historyEpoch, cacheEpoch, generation, token);
             var replacementStarted = Environment.TickCount64;
+            var verifyReplacement = _verifyReplacement;
             Task<ReplacementResult>? replacementTask = null;
             replacementTask = _editor.ReplaceAsync(capture.Snapshot, translatedText, action =>
             {
@@ -596,8 +598,8 @@ internal sealed class ApplicationController : IDisposable
             }, token, () => IsCurrent(generation, token), () => _dispatcher.TryEnqueue(() =>
             {
                 if (IsCurrent(generation, token) && replacementTask is { IsCompleted: false })
-                    _page.SetStatus("正在确认回填…");
-            }));
+                    _page.SetStatus(verifyReplacement ? "正在确认回填…" : "正在处理回填…");
+            }), confirmAfterReplacement: verifyReplacement);
             var replacement = await replacementTask;
             DiagnosticLog.Write($"event=replacement-complete generation={generation} status={replacement.Status} elapsedMs={Environment.TickCount64 - replacementStarted}");
             if (!IsCurrent(generation, token)) return;
@@ -608,10 +610,11 @@ internal sealed class ApplicationController : IDisposable
                 _page.SetResult(translatedText);
                 Notify(replacement.Status switch
                 {
+                    ReplacementStatus.SubmittedUnconfirmed when !verifyReplacement => "已提交回填，未进行回填后检测；请检查目标输入框。",
                     ReplacementStatus.SubmittedUnconfirmed => "已提交回填但无法确认，请检查目标输入框；译文可在设置中复制。",
                     ReplacementStatus.OutcomeUnknown => "回填结果不确定，请先检查目标输入框；译文可在设置中复制。",
                     _ => "未能自动回填，译文可在设置中复制。"
-                }, true);
+                }, error: replacement.Status != ReplacementStatus.SubmittedUnconfirmed || verifyReplacement);
             }
         }
         catch (OperationCanceledException)
@@ -679,13 +682,14 @@ internal sealed class ApplicationController : IDisposable
     private void ApplyPreferences(ApplicationPreferences preferences)
     {
         _notificationsEnabled = preferences.NotificationsEnabled;
+        _verifyReplacement = preferences.VerifyReplacement;
         _page.ApplyApplicationSettings(
             preferences.Language == InterfaceLanguage.English ? "en-US" : "zh-CN",
-            preferences.Theme.ToString(), preferences.NotificationsEnabled);
+            preferences.Theme.ToString(), preferences.NotificationsEnabled, preferences.VerifyReplacement);
         _tray?.SetEnglish(preferences.Language == InterfaceLanguage.English);
     }
 
-    private async void OnApplicationSettingsChanged(string language, string theme, bool notificationsEnabled)
+    private async void OnApplicationSettingsChanged(string language, string theme, bool notificationsEnabled, bool verifyReplacement)
     {
         var version = ++_preferencesVersion;
         if (_preferencesUnavailable)
@@ -697,8 +701,9 @@ internal sealed class ApplicationController : IDisposable
         var next = new ApplicationPreferences(
             language == "en-US" ? InterfaceLanguage.English : InterfaceLanguage.SimplifiedChinese,
             Enum.TryParse<ApplicationTheme>(theme, out var parsed) && Enum.IsDefined(parsed) ? parsed : ApplicationTheme.System,
-            notificationsEnabled);
+            notificationsEnabled, verifyReplacement);
         _notificationsEnabled = notificationsEnabled;
+        _verifyReplacement = verifyReplacement;
         _tray?.SetEnglish(next.Language == InterfaceLanguage.English);
         await _preferencesGate.WaitAsync();
         try

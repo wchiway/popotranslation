@@ -16,7 +16,8 @@ public enum ApplicationTheme
 public sealed record ApplicationPreferences(
     InterfaceLanguage Language = InterfaceLanguage.SimplifiedChinese,
     ApplicationTheme Theme = ApplicationTheme.System,
-    bool NotificationsEnabled = true);
+    bool NotificationsEnabled = true,
+    bool VerifyReplacement = true);
 
 public interface IApplicationPreferencesStore
 {

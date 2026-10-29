@@ -90,6 +90,26 @@ Check(EditorReplacer.Replace(whole, "译文", backend).Status == ReplacementStat
 backend.Confirmed = false;
 Check(EditorReplacer.Replace(whole, "译文", backend).Status == ReplacementStatus.SubmittedUnconfirmed,
     "写入未确认时不得报告成功");
+var skippedConfirmations = backend.Confirmations;
+var skippedResult = EditorReplacer.Replace(whole, "译文", backend, confirmAfterReplacement: false);
+Check(skippedResult.Status == ReplacementStatus.SubmittedUnconfirmed &&
+      skippedResult.Reason!.Contains("未检查") && backend.Confirmations == skippedConfirmations,
+    "关闭确认应跳过读取并准确报告已提交但未检查");
+var writesBeforeSafetyChecks = backend.Writes;
+foreach (var changed in new[]
+{
+    whole with { WindowHandle = (nint)8 },
+    whole with { DocumentText = "变化" },
+    whole with { SelectionStart = 2, SelectionEnd = 4 }
+})
+{
+    backend.Current = changed;
+    Check(EditorReplacer.Replace(whole, "译文", backend, confirmAfterReplacement: false).Status == ReplacementStatus.ManualApply &&
+          backend.Writes == writesBeforeSafetyChecks, "关闭确认仍需验证目标、原文及选区");
+}
+backend.Current = whole;
+Check(EditorReplacer.Replace(whole, "译文", backend, isCurrent: () => false, confirmAfterReplacement: false).Status == ReplacementStatus.ManualApply &&
+      backend.Writes == writesBeforeSafetyChecks, "关闭确认时失效任务仍不得写入");
 backend.Submission = ReplacementSubmission.NotSubmitted;
 var confirmsBefore = backend.Confirmations;
 Check(EditorReplacer.Replace(whole, "译文", backend).Status == ReplacementStatus.ManualApply && backend.Confirmations == confirmsBefore,
@@ -97,6 +117,11 @@ Check(EditorReplacer.Replace(whole, "译文", backend).Status == ReplacementStat
 backend.Submission = ReplacementSubmission.Unknown;
 Check(EditorReplacer.Replace(whole, "译文", backend).Status == ReplacementStatus.OutcomeUnknown && backend.Confirmations == confirmsBefore,
     "发送情况不确定时不得报告已提交或安全手动应用");
+Check(EditorReplacer.Replace(whole, "译文", backend, confirmAfterReplacement: false).Status == ReplacementStatus.OutcomeUnknown && backend.Confirmations == confirmsBefore,
+    "关闭确认时发送情况不确定仍不可报告已提交");
+backend.Submission = ReplacementSubmission.NotSubmitted;
+Check(EditorReplacer.Replace(whole, "译文", backend, confirmAfterReplacement: false).Status == ReplacementStatus.ManualApply && backend.Confirmations == confirmsBefore,
+    "关闭确认时未发送仍需报告手动应用");
 Check(ClipboardPasteSubmission.FromClipboardStatus(ClipboardPasteStatus.NotSubmitted) == ReplacementSubmission.NotSubmitted &&
       ClipboardPasteSubmission.FromClipboardStatus(ClipboardPasteStatus.Unknown) == ReplacementSubmission.Unknown &&
       ClipboardPasteSubmission.FromClipboardStatus(ClipboardPasteStatus.Submitted) == ReplacementSubmission.Submitted,

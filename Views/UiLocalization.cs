@@ -15,6 +15,8 @@ internal static class UiLocalization
         ["配置翻译语言、默认触发方式和服务连接。"] = "Configure translation languages, shortcuts, and service connections.",
         ["准备就绪"] = "Ready", ["保存设置后，使用快捷键开始翻译。"] = "Save your settings, then use a shortcut to translate.",
         ["应用设置"] = "App settings", ["界面语言"] = "Display language", ["主题"] = "Theme", ["跟随系统"] = "Use system setting", ["浅色"] = "Light", ["深色"] = "Dark", ["通知"] = "Notifications", ["开启"] = "On", ["关闭"] = "Off",
+        ["回填后检测"] = "Check after replacement", ["关闭后跳过回填提交后的确认检查；写入前的安全验证仍然执行。"] = "When off, the confirmation check after submitting a replacement is skipped. Safety checks before writing still run.",
+        ["已提交回填，未进行回填后检测；请检查目标输入框。"] = "Replacement was submitted without a confirmation check. Check the target input box.", ["正在处理回填…"] = "Applying replacement…",
         ["翻译设置"] = "Translation settings", ["更改后立即保存。"] = "Changes are saved immediately.", ["翻译设置和服务配置一起保存。"] = "Translation settings and service configuration are saved together.",
         ["翻译"] = "Translation", ["默认连续按三次空格，翻译整个输入框。"] = "By default, press Space three times to translate the whole input box.",
         ["源语言"] = "Source language", ["源语言，留空自动识别"] = "Source language; leave empty to detect automatically", ["自动识别（留空）"] = "Detect automatically (leave empty)", ["自动识别"] = "Detect automatically",

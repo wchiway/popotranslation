@@ -99,7 +99,8 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
     // The caller must synchronously execute the callback only while the task is current.
     public async Task<ReplacementResult> ReplaceAsync(EditorSnapshot snapshot, string translatedText,
         Func<Func<ReplacementResult>, ReplacementResult> executeIfCurrent,
-        CancellationToken cancellationToken = default, Func<bool>? isCurrent = null, Action? onPasteSubmitted = null)
+        CancellationToken cancellationToken = default, Func<bool>? isCurrent = null, Action? onPasteSubmitted = null,
+        bool confirmAfterReplacement = true)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentNullException.ThrowIfNull(translatedText);
@@ -117,7 +118,7 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
                 return executeIfCurrent(() =>
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    return EditorReplacer.Replace(snapshot, translatedText, backend, cancellationToken, isCurrent);
+                    return EditorReplacer.Replace(snapshot, translatedText, backend, cancellationToken, isCurrent, confirmAfterReplacement);
                 });
             }, cancellationToken, waitForCompletion: true);
             var replacement = accepted ? result! : new(ReplacementStatus.ManualApply, "辅助功能线程繁忙，请手动应用。");

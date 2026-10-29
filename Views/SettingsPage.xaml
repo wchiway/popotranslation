@@ -38,6 +38,8 @@
                                 <ComboBoxItem Content="深色" Tag="Dark" />
                             </ComboBox>
                             <ToggleSwitch x:Name="NotificationsToggle" Header="通知" IsEnabled="False" OnContent="开启" OffContent="关闭" Toggled="AppSettings_Toggled" />
+                            <ToggleSwitch x:Name="VerifyReplacementToggle" Header="回填后检测" IsEnabled="False" OnContent="开启" OffContent="关闭" Toggled="AppSettings_Toggled" />
+                            <TextBlock Text="关闭后跳过回填提交后的确认检查；写入前的安全验证仍然执行。" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         </StackPanel>
                     </Border>
                     <StackPanel x:Name="TranslationPage" Visibility="Collapsed" Spacing="20">

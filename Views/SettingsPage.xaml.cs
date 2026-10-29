@@ -71,13 +71,13 @@ public sealed partial class SettingsPage : Page
     private const int MaxVisibleHistory = 50;
     private const int HistoryPreviewLength = 120;
 
-    public event Action<string, string, bool>? ApplicationSettingsChanged;
+    public event Action<string, string, bool, bool>? ApplicationSettingsChanged;
 
     // Values are stable persistence identifiers, independent of the displayed language.
-    public void ApplyApplicationSettings(string language, string theme, bool notificationsEnabled) =>
-        ApplyApplicationSettingsCore(language, theme, notificationsEnabled, true);
+    public void ApplyApplicationSettings(string language, string theme, bool notificationsEnabled, bool verifyReplacement) =>
+        ApplyApplicationSettingsCore(language, theme, notificationsEnabled, verifyReplacement, true);
 
-    private void ApplyApplicationSettingsCore(string language, string theme, bool notificationsEnabled, bool enableControls)
+    private void ApplyApplicationSettingsCore(string language, string theme, bool notificationsEnabled, bool verifyReplacement, bool enableControls)
     {
         _updatingApplicationSettings = true;
         try
@@ -86,9 +86,11 @@ public sealed partial class SettingsPage : Page
             AppLanguageBox.SelectedIndex = _language == "en-US" ? 1 : 0;
             AppThemeBox.SelectedIndex = theme switch { "Light" => 1, "Dark" => 2, _ => 0 };
             NotificationsToggle.IsOn = notificationsEnabled;
+            VerifyReplacementToggle.IsOn = verifyReplacement;
             AppLanguageBox.IsEnabled = enableControls;
             AppThemeBox.IsEnabled = enableControls;
             NotificationsToggle.IsEnabled = enableControls;
+            VerifyReplacementToggle.IsEnabled = enableControls;
             RequestedTheme = theme switch { "Light" => ElementTheme.Light, "Dark" => ElementTheme.Dark, _ => ElementTheme.Default };
             RefreshLanguage();
         }
@@ -115,11 +117,13 @@ public sealed partial class SettingsPage : Page
 
     private void OnApplicationSettingsChanged()
     {
-        if (_updatingApplicationSettings || AppLanguageBox?.SelectedItem is not ComboBoxItem language || AppThemeBox?.SelectedItem is not ComboBoxItem theme || NotificationsToggle is null) return;
+        if (_updatingApplicationSettings || AppLanguageBox?.SelectedItem is not ComboBoxItem language || AppThemeBox?.SelectedItem is not ComboBoxItem theme || NotificationsToggle is null || VerifyReplacementToggle is null) return;
         var languageValue = (string)language.Tag;
         var themeValue = (string)theme.Tag;
-        ApplyApplicationSettings(languageValue, themeValue, NotificationsToggle.IsOn);
-        ApplicationSettingsChanged?.Invoke(languageValue, themeValue, NotificationsToggle.IsOn);
+        var notificationsEnabled = NotificationsToggle.IsOn;
+        var verifyReplacement = VerifyReplacementToggle.IsOn;
+        ApplyApplicationSettings(languageValue, themeValue, notificationsEnabled, verifyReplacement);
+        ApplicationSettingsChanged?.Invoke(languageValue, themeValue, notificationsEnabled, verifyReplacement);
     }
 
     private void CaptureLocalizedProperties(object? node)
@@ -206,7 +210,7 @@ public sealed partial class SettingsPage : Page
         Navigation.SelectionChanged += Navigation_SelectionChanged;
         Navigation.SelectedItem = ServiceNavigation;
         ShowPage("service");
-        ApplyApplicationSettingsCore("zh-CN", "System", true, false);
+        ApplyApplicationSettingsCore("zh-CN", "System", true, true, false);
         TimeoutBox.Text = "30";
     }
 
