@@ -7,6 +7,8 @@ internal static class UiLocalization
 {
     internal static readonly IReadOnlyDictionary<string, string> English = new Dictionary<string, string>
     {
+        ["检查更新"] = "Check for updates", ["检查 GitHub 最新正式版；下载完成后可启动安装程序。"] = "Check the latest stable release on GitHub and launch its installer after download.",
+        ["正在检查更新…"] = "Checking for updates…", ["当前已是最新版本。"] = "You are up to date.", ["发现新版本"] = "Update available", ["下载"] = "Download", ["正在下载安装程序…"] = "Downloading the installer…", ["安装更新？"] = "Install update?", ["下载完成。应用将退出，安装程序可能请求管理员权限。安装包未签名，请确认来源后继续。"] = "The download is complete. The app will close and the installer may request administrator permission. The installer is unsigned; confirm its source before proceeding.", ["安装"] = "Install", ["有新的正式版可用。是否下载安装程序？"] = "A new stable release is available. Download the installer?", ["安装程序已下载。"] = "Installer downloaded.", ["请先保存未完成的设置。"] = "Save any unfinished settings first.", ["无法检查或下载更新，请检查网络后重试。"] = "Could not check or download the update. Check your connection and try again.", ["无法启动安装程序，请重试。"] = "Could not launch the installer. Try again.",
         ["关于"] = "About", ["Windows 桌面翻译工具"] = "Windows desktop translation tool", ["版本"] = "Version", ["许可证：Apache License 2.0"] = "License: Apache License 2.0", ["项目主页"] = "Project website", ["许可证全文"] = "Full license",
         ["开机自启动"] = "Start with Windows", ["登录 Windows 后启动应用。Windows 启动应用设置可能影响此选项；移动程序前请先关闭。"] = "Start the app after signing in to Windows. Windows startup settings may affect this option; turn it off before moving the app.",
         ["无法读取开机自启动设置。"] = "Could not read the startup setting.", ["无法更改开机自启动设置；请检查 Windows 设置或已有启动项。"] = "Could not change the startup setting. Check Windows settings or an existing startup entry.",

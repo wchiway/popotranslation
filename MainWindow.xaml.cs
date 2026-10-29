@@ -24,6 +24,7 @@ public sealed partial class MainWindow : Window
         }
         ResizeForContent();
         AppWindow.Closing += OnClosing;
+        Settings.ExitForUpdate = ExitApplication;
         _controller = new ApplicationController(Settings, DispatcherQueue, ShowSettings, ExitApplication, iconPath);
         _ = _controller.InitializeAsync();
     }

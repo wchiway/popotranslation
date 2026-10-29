@@ -54,6 +54,8 @@
                             <TextBlock Text="Windows 桌面翻译工具" TextWrapping="Wrap" />
                             <TextBlock Text="版本" />
                             <TextBlock x:Name="AboutVersion" IsTextSelectionEnabled="True" />
+                            <Button x:Name="CheckUpdateButton" Content="检查更新" Click="CheckUpdate_Click" />
+                            <TextBlock Text="检查 GitHub 最新正式版；下载完成后可启动安装程序。" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                             <TextBlock Text="许可证：Apache License 2.0" TextWrapping="Wrap" />
                             <HyperlinkButton Content="项目主页" NavigateUri="https://github.com/wchiway/popotranslation" />
                             <HyperlinkButton Content="许可证全文" NavigateUri="https://github.com/wchiway/popotranslation/blob/main/LICENSE" />

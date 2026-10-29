@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 using popotranslation.Services;
@@ -79,6 +80,7 @@ public sealed partial class SettingsPage : Page
     private const int HistoryPreviewLength = 120;
 
     public event Action<string, string, bool, bool>? ApplicationSettingsChanged;
+    public Action? ExitForUpdate { get; set; }
 
     // Values are stable persistence identifiers, independent of the displayed language.
     public void ApplyApplicationSettings(string language, string theme, bool notificationsEnabled, bool verifyReplacement) =>
@@ -117,6 +119,52 @@ public sealed partial class SettingsPage : Page
         if (chinese.StartsWith(unknownPrefix, StringComparison.Ordinal) && chinese.EndsWith(unknownSuffix, StringComparison.Ordinal))
             return $"UIA cannot determine whether {chinese[unknownPrefix.Length..^unknownSuffix.Length]} is protected. Put the cursor in a chat input box and try again.";
         return chinese;
+    }
+
+    private async void CheckUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        CheckUpdateButton.IsEnabled = false;
+        try
+        {
+            var service = new ReleaseUpdateService();
+            SetStatus("正在检查更新…");
+            var check = await service.CheckForUpdateAsync(AboutVersion.Text);
+            if (!check.IsUpdateAvailable) { SetStatus("当前已是最新版本。"); return; }
+            var downloadDialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = Localize("发现新版本") + " " + check.Release.Version,
+                Content = Localize("有新的正式版可用。是否下载安装程序？"),
+                PrimaryButtonText = Localize("下载"), CloseButtonText = Localize("取消"),
+                DefaultButton = ContentDialogButton.Close
+            };
+            if (await downloadDialog.ShowAsync() != ContentDialogResult.Primary) return;
+            if (HasUnsavedChanges() || _busy) { SetStatus("请先保存未完成的设置。", true); return; }
+            SetStatus("正在下载安装程序…");
+            var download = await service.DownloadInstallerAsync(check.Release);
+            SetStatus("安装程序已下载。");
+            if (HasUnsavedChanges() || _busy) { SetStatus("请先保存未完成的设置。", true); return; }
+            var installDialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = Localize("安装更新？"),
+                Content = Localize("下载完成。应用将退出，安装程序可能请求管理员权限。安装包未签名，请确认来源后继续。"),
+                PrimaryButtonText = Localize("安装"), CloseButtonText = Localize("取消"),
+                DefaultButton = ContentDialogButton.Close
+            };
+            if (await installDialog.ShowAsync() != ContentDialogResult.Primary) return;
+            if (HasUnsavedChanges() || _busy) { SetStatus("请先保存未完成的设置。", true); return; }
+            try
+            {
+                if (ExitForUpdate is null) throw new InvalidOperationException();
+                using var installer = Process.Start(new ProcessStartInfo(download.FilePath) { UseShellExecute = true }) ?? throw new InvalidOperationException();
+                ExitForUpdate();
+            }
+            catch (Exception) { SetStatus("无法启动安装程序，请重试。", true); }
+        }
+        catch (Exception) { SetStatus("无法检查或下载更新，请检查网络后重试。", true); }
+        finally { CheckUpdateButton.IsEnabled = true; }
     }
 
     private void RefreshStartup()
