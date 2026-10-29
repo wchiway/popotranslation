@@ -118,6 +118,10 @@ public sealed partial class SettingsPage : Page
             Add(AutomationProperties.GetName(dependency), value => AutomationProperties.SetName(dependency, value));
         switch (node)
         {
+            case NavigationView navigation:
+                foreach (var item in navigation.MenuItems) CaptureLocalizedProperties(item);
+                CaptureLocalizedProperties(navigation.Content);
+                break;
             case TextBlock text: Add(text.Text, value => text.Text = value); break;
             case TextBox box:
                 Add(box.Header as string, value => box.Header = value);
@@ -172,9 +176,30 @@ public sealed partial class SettingsPage : Page
     {
         InitializeComponent();
         CaptureLocalizedProperties(Content);
+        Navigation.SelectionChanged += Navigation_SelectionChanged;
+        Navigation.SelectedItem = ServiceNavigation;
+        ShowPage("service");
         ApplyApplicationSettingsCore("zh-CN", "System", true, false);
         TimeoutBox.Text = "30";
     }
+
+    private void Navigation_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
+    {
+        if (args.SelectedItem is NavigationViewItem item && item.Tag is string page)
+            ShowPage(page);
+    }
+
+    private void ShowPage(string page)
+    {
+        ServiceCard.Visibility = page == "service" ? Visibility.Visible : Visibility.Collapsed;
+        TranslationPage.Visibility = page == "translation" ? Visibility.Visible : Visibility.Collapsed;
+        ResultPage.Visibility = page == "result" ? Visibility.Visible : Visibility.Collapsed;
+        AppPage.Visibility = page == "app" ? Visibility.Visible : Visibility.Collapsed;
+        ServiceActions.Visibility = page is "service" or "translation" ? Visibility.Visible : Visibility.Collapsed;
+        PageScroll.ChangeView(null, 0, null);
+    }
+
+    public void ShowResultPage() => Navigation.SelectedItem = ResultNavigation;
 
     public void LoadSettings(SettingsForm settings)
     {
@@ -431,6 +456,14 @@ public sealed partial class SettingsPage : Page
         }
         if (!TryGetForm(out var form, out var error))
         {
+            Navigation.SelectedItem = error switch
+            {
+                "阿里云机器翻译暂不支持所选的繁體中文；请选择其他语言或服务。" or
+                "快捷键须包含 Ctrl、Alt 或 Shift 和一个字母、数字或 F1–F24 功能键；F12 及 Win 组合不可用。" or
+                "两个翻译快捷键不能相同。" => TranslationNavigation,
+                "请填写服务名称、目标语言，选择服务类型；AI 服务还需填写模型。" when string.IsNullOrEmpty(SelectedTargetLanguage) => TranslationNavigation,
+                _ => ServiceNavigation
+            };
             SetStatus(error, true);
             return;
         }

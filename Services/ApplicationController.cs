@@ -554,8 +554,11 @@ internal sealed class ApplicationController : IDisposable
         if (_disposed) return;
         switch (action)
         {
-            case TrayAction.OpenSettings:
-            case TrayAction.OpenResult: _openSettings(); break;
+            case TrayAction.OpenSettings: _openSettings(); break;
+            case TrayAction.OpenResult:
+                _page.ShowResultPage();
+                _openSettings();
+                break;
             case TrayAction.TogglePause:
                 _paused = !_paused;
                 if (_paused) Invalidate();
