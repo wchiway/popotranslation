@@ -128,9 +128,9 @@ jobs:
           if ($unsafe) { throw 'Publish output contains potentially sensitive files or reparse points.' }
           & $env:ISCC_PATH /NI "/DPublishDir=$publish" "/DAppVersion=$env:APP_VERSION" "/O$output" installer/PopoTranslation.iss
           if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed.' }
-          $setup = Join-Path $output "PopoTranslation-Setup-$env:APP_VERSION-x64.exe"
+          $setup = Join-Path $output "PopoTranslation.$env:APP_VERSION.Setup.x64.exe"
           if (-not (Test-Path -LiteralPath $setup)) { throw 'Expected installer was not generated.' }
-          Copy-Item -LiteralPath $setup -Destination (Join-Path $artifacts "PopoTranslation-Setup-$env:VERSION-x64.exe")
+          Copy-Item -LiteralPath $setup -Destination (Join-Path $artifacts "PopoTranslation.$env:VERSION.Setup.x64.exe")
           Compress-Archive -Path (Join-Path $publish '*') -DestinationPath (Join-Path $artifacts "PopoTranslation-$env:VERSION-win-x64.zip")
           Get-ChildItem -LiteralPath $artifacts -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($_.Path))" } | Set-Content -LiteralPath (Join-Path $artifacts 'SHA256SUMS.txt') -Encoding utf8
 
