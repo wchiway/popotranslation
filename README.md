@@ -1,58 +1,57 @@
 # PopoTranslation
 
-PopoTranslation 是一个使用 C#、.NET 10 和 WinUI 3 构建的 Windows 桌面 AI 翻译工具。程序常驻托盘，**连续按三次空格**后会读取当前输入框，调用配置的 AI 服务翻译，并尝试回填；无法安全回填时保留译文供手动复制。
+PopoTranslation 是一个 Windows 桌面翻译工具。程序常驻系统托盘，在其他应用的输入框中输入文字后，按快捷键即可调用所配置的翻译服务，并尝试将译文回填到原位置。无法安全回填时，可以在应用中查看和复制译文。
 
-## 已实现
+## 主要功能
 
-- WinUI 3 侧边栏设置窗口、托盘常驻、单实例运行；应用设置支持简体中文和英语界面、系统/浅色/深色主题，以及托盘通知开关。
-- 默认识别方式：连续三次空格；同时保留可配置的选区/整框备用快捷键。
-- 多行和富文本文本的读取：优先使用 UI Automation；QQ、微信、Discord、Telegram 和记事本等应用在无法暴露可编辑文本控件时使用剪贴板兼容路径。
-- 多行/富文本回填：标准可写 ValuePattern 直接设置；其他社交软件通过剪贴板粘贴；终端只读取选中的文本，不自动改写。
-- 多个翻译服务配置的新增、切换和删除；密钥使用当前 Windows 用户的 DPAPI 保护。
-- 四种 AI 协议：OpenAI Chat Completions、OpenAI Responses、Anthropic Messages、Google Gemini 原生 generateContent。
-- 机器翻译服务：阿里云、百度翻译、有道智云、DeepL，以及百炼 Qwen-MT 专用翻译接口；账号凭据分别使用 DPAPI 保护。
-- 使用 SQLite 保存翻译历史和缓存，相同文本与翻译配置命中缓存时无需再次调用服务。
-- 手动连接测试；连接测试不会在保存设置时自动执行。
-- 过期任务、取消、超时、拒绝、截断和思考块过滤。
-- 单实例运行：再次启动会唤醒已有实例。
+- **快捷翻译**：默认连续按三次空格翻译整个输入框，也可以配置选区和整框翻译的备用快捷键。程序不会自动发送消息。
+- **AI 翻译**：支持 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 和 Google Gemini 原生 generateContent 协议。可为每个服务填写自定义请求头和请求体 JSON。
+- **机器翻译**：支持阿里云、百度翻译、有道智云、DeepL 和阿里百炼 Qwen-MT。
+- **历史与缓存**：成功的翻译可保存在本机 SQLite 数据库中；原文和翻译配置均匹配时，直接使用缓存译文。历史记录和缓存可分别清空。
+- **桌面设置**：支持多个服务配置、简体中文和英文界面、系统／浅色／深色主题，以及托盘通知开关。
 
-默认连续三次空格会翻译整个输入框；第三次空格会被拦截，前两次空格会从翻译源文本中去除。终端中不启用三次空格，请先选中文本并使用选区备用快捷键。
+## 开始使用
 
-## 技术栈
+目标环境为 Windows 11 x64。应用使用 C#、.NET 10 和 WinUI 3 开发，并支持构建 EXE 安装程序。安装包构建与验证状态见 [安装包构建说明](docs/installation.md)。
 
-| 领域 | 选型 |
-| --- | --- |
-| 平台 | Windows 11 x64，.NET 10 LTS |
-| UI | WinUI 3 / Windows App SDK |
-| 输入框交互 | Windows UI Automation、Win32 |
-| AI | OpenAI、Anthropic、Google.GenAI 官方 .NET SDK，独立协议适配 |
-| 配置 | JSON 普通设置与 DPAPI 用户凭据保护 |
-| 部署 | Unpackaged 桌面应用，支持构建 EXE 安装程序 |
+1. 启动应用，从系统托盘打开设置。
+2. 在「翻译服务」中选择服务类型，填写服务地址、模型和所需凭据，然后保存。机器翻译服务所需凭据因服务商而异。
+3. 在「翻译设置」中选择目标语言，并按需设置源语言、翻译风格和备用快捷键。
+4. 在目标应用的输入框输入文字，连续按三次空格触发翻译；也可以使用设置页中的备用快捷键。
+5. 若应用提示无法确认或无法自动回填，在「翻译结果」中复制译文，检查目标输入框后手动粘贴。
 
-依赖版本锁定在项目中；构建前请阅读 [开发与构建](docs/development.md)。
+连续三次空格会翻译整个输入框：触发成功时第三次空格被拦截，翻译源文本末尾的半角空格会被移除。终端中不启用三次空格，请先选择文本并使用选区备用快捷键；终端内容不会自动替换。首次保存时，请检查备用快捷键并按设置页提示填写有效组合。
 
-## 运行
+## 翻译服务
 
-在 Visual Studio 2026 中打开 `popotranslation.slnx`，选择 `x64`，启动 `popotranslation`。打开托盘菜单中的设置，至少填写一个服务配置、模型、API Key 和目标语言并保存。主触发方式是连续三次空格；备用快捷键默认为 `Ctrl+Alt+F9`（选区）和 `Ctrl+Alt+F10`（整个输入框），可在设置中修改。备用组合被占用时保存仍会成功，三次空格仍可使用。
+| 类型 | 服务或协议 | 配置说明 |
+| --- | --- | --- |
+| AI | OpenAI Chat Completions、OpenAI Responses、Anthropic Messages、Gemini generateContent | 配置服务地址、模型和 API Key；可选填高级请求 JSON。 |
+| 机器翻译 | 阿里云、百度、有道智云 | 分别填写对应的访问凭据；机器翻译不使用 AI 翻译风格。 |
+| 机器翻译 | DeepL | 默认使用免费版地址，付费版需填写官方 API 地址。 |
+| 机器翻译 | 百炼 Qwen-MT | 选择模型及北京或新加坡地域，也可填写业务空间兼容地址；API Key 须与地域匹配。 |
 
-OpenAI Chat、OpenAI Responses、Anthropic Messages 和 Gemini 服务可在“高级请求设置”中填写 JSON 对象，分别追加自定义请求头和请求体字段。例如请求头 `{"X-Client-Name":"PopoTranslation"}`，或 OpenAI 请求体 `{"temperature":0.2}`；Gemini 可使用 `{"generationConfig":{"temperature":0.2}}`。服务商支持的参数以其文档为准。认证、输入、流式输出等受保护字段不能覆盖；设置会使用当前 Windows 用户的 DPAPI 加密保存，清空输入并保存即可移除。
+当前机器翻译只映射部分常用语言，阿里云暂不支持繁体中文。服务商可能限制请求长度或改变换行；机器翻译的多行结构检查未通过时不会自动回填。服务可用性和费用以服务商为准。Qwen-MT 的参数与语种限制可查看[官方文档](https://docs.bailian.console.aliyun.com/zh/model-studio/machine-translation)。
 
-机器翻译设置中选择对应服务，填写阿里云 AccessKey ID/Secret、百度 APP ID/密钥、有道应用 ID/密钥或 DeepL API Key。DeepL 默认使用免费版地址，付费版需填写官方 API 地址。机器翻译不使用 AI 风格设置；当前只映射部分常用语言，阿里云暂不支持繁体中文。服务商可能限制请求长度或改变换行；不完整的多行结果不会自动回填。真实服务的可用性与费用以各厂商为准。
+四种 AI 协议的「高级请求设置」允许填写 JSON 对象。例如，OpenAI 请求体可填写 `{"temperature":0.2}`，Gemini 可填写 `{"generationConfig":{"temperature":0.2}}`。认证、模型、输入和流式输出等由应用管理的字段不可覆盖；具体可用参数取决于服务商和模型。连接测试需手动触发，可能产生服务费用。
 
-百炼 Qwen-MT 请选择“百炼 Qwen-MT”，填写对应地域的百炼 API Key，并选择 `qwen-mt-flash`、`qwen-mt-plus` 或 `qwen-mt-lite`。默认使用北京地域，也可选择新加坡或填写业务空间的兼容模式地址；API Key 必须与地域匹配。更多参数及语种限制见 [官方文档](https://docs.bailian.console.aliyun.com/zh/model-studio/machine-translation)。
+## 数据与隐私
 
-## 诊断日志
+默认数据目录为 `%USERPROFILE%\.PopoTranslation`。若旧版目录 `%LOCALAPPDATA%\PopoTranslation` 已存在，程序会继续使用旧目录，不自动迁移或删除数据。
 
-程序默认将输入捕获和剪贴板操作的诊断事件保存在 `%USERPROFILE%\.PopoTranslation\logs`。已有旧版数据目录的用户继续使用 `%LOCALAPPDATA%\PopoTranslation\logs`。日志包含目标进程名、窗口句柄、时间、操作结果和错误类型，不包含输入文字、译文、剪贴板内容或 API Key。每个进程使用独立文件，单文件最多约 2 MiB；旧日志不会自动删除，可按需手动清理。日志写入失败不会影响翻译。
+- 服务配置和应用偏好以 JSON 保存；服务凭据与高级请求设置使用当前 Windows 用户的 DPAPI 加密保护。发起翻译时，原文会发送到所配置的翻译服务。
+- 翻译历史和缓存保存在 `translations.db`，**原文和译文以明文保存在本机**。历史页面显示最近 50 条记录；数据不会自动过期或限量，清空也不保证安全擦除磁盘残留。服务端模型更新不会自动使缓存失效，需要时可手动清空缓存。
+- 诊断日志保存在数据目录的 `logs` 文件夹中，记录目标进程、操作状态和错误类型，不记录原文、译文或 API Key。旧日志不会自动删除。
+- 剪贴板兼容路径会短暂占用剪贴板，并尝试恢复原内容。程序写入的临时标记和译文会请求 Windows 将其排除在剪贴板历史和同步之外；由目标应用复制的原文仍可能进入系统或第三方剪贴板历史。
 
-## 限制
+## 兼容性与限制
 
-自动回填依赖目标控件或剪贴板兼容路径，跨进程检查与写入不是原子操作；输入法组合中的内容、部分自绘控件、受保护窗口和终端输入不会被自动替换。QQ、微信、Discord、Telegram 的实际客户端版本、权限和输入法状态需要逐个实测。剪贴板兼容模式会短暂占用系统剪贴板，并尝试恢复原内容；若系统或目标应用拒绝恢复，剪贴板可能保留译文。详细边界见 [兼容性说明](docs/compatibility.md)。
+输入读取优先使用 Windows UI Automation；部分社交应用和记事本会使用剪贴板兼容路径。多行文字作为整体翻译，手动换行按 CRLF 处理；自然折行不会被转换成额外换行。
 
-程序写入的临时标记和译文会请求 Windows 不将其加入剪贴板历史或同步到其他设备。通过目标应用复制的原文不受该标记控制，仍可能出现在系统或第三方剪贴板历史中；既有历史记录不会自动删除。
+自动回填取决于目标控件和应用行为，跨进程检查与写入并非原子操作。明确标记为受保护的控件不会取文；已知聊天和文本编辑器的剪贴板兼容路径在无法确认密码属性时仍可能读取内容，请避免将焦点放在敏感输入框。输入法组合状态、部分自绘控件、权限不同的窗口和终端存在限制。QQ、微信、Discord、Telegram 等客户端的具体版本仍需实测。更多信息见 [兼容性说明](docs/compatibility.md)。
 
-翻译历史和缓存默认保存在本机 `%USERPROFILE%\.PopoTranslation\translations.db` SQLite 数据库中；若旧版数据目录 `%LOCALAPPDATA%\PopoTranslation` 已存在，则继续使用该目录。数据库包含明文原文和译文；历史页面显示最近 50 条记录，可分别清空历史和缓存；数据不会自动过期或限量，清空也不保证对磁盘残留进行安全擦除。缓存仅在文本及相关翻译配置相同时复用，服务端模型更新不会自动使旧缓存失效，可手动清空缓存。工具不会自动发送消息或执行原文中的指令。API Key 和个人配置仅保存在本机，不进入仓库。
+## 开发与发布
 
-## 开发
+在 Visual Studio 中打开 `popotranslation.slnx`，选择 `x64` 配置。环境要求、构建和测试方法见 [开发与构建](docs/development.md)；模块关系见 [架构说明](docs/architecture.md)。
 
-构建、测试和已知限制见 [docs/development.md](docs/development.md)；EXE 安装包构建方法见 [docs/installation.md](docs/installation.md)；GitHub Actions 测试与发布方式见 [docs/ci.md](docs/ci.md)；模块关系见 [docs/architecture.md](docs/architecture.md)。
+GitHub Actions 提供测试及手动触发的正式版／预发布版工作流，具体用法见 [CI 说明](docs/ci.md)。构建成功不代表完成安装、升级、卸载或目标应用兼容性验收；发布前请检查 [发布检查清单](docs/release-checklist.md)。
