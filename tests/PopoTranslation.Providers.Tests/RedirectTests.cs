@@ -25,7 +25,7 @@ public sealed class RedirectTests
         deadline.CancelAfter(TimeSpan.FromSeconds(15));
         var server = SendRedirectAsync(source, destinationPort, deadline.Token);
         var profile = new ProviderProfile("id", "test", protocol, $"http://127.0.0.1:{sourcePort}", "test-model", "ref", 10);
-        var provider = TranslationProviderFactory.Create(profile, "dummy-key");
+        var provider = TranslationProviderFactory.Create(profile, "dummy-key", advancedOptions: new AdvancedRequestOptions("{\"X-Custom-Feature\":\"enabled\"}", "{\"temperature\":0.3}"));
         var result = await provider.TranslateAsync(new TranslationRequest("dummy text", "Chinese", null, null), deadline.Token);
         await server;
         Assert.True(result.Status == TranslationStatus.Failed && result.ErrorCode == "http_307",

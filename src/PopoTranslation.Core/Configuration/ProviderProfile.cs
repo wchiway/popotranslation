@@ -10,7 +10,8 @@ public sealed record ProviderProfile(
     [property: JsonRequired] string ModelId,
     [property: JsonRequired] string CredentialReference,
     [property: JsonRequired] int TimeoutSeconds,
-    string? SecondaryCredentialReference = null);
+    string? SecondaryCredentialReference = null,
+    string? AdvancedConfigurationReference = null);
 
 public static class ProviderCredentialPolicy
 {

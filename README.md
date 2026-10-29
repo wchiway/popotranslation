@@ -34,6 +34,8 @@ PopoTranslation 是一个使用 C#、.NET 10 和 WinUI 3 构建的 Windows 桌�
 
 在 Visual Studio 2026 中打开 `popotranslation.slnx`，选择 `x64`，启动 `popotranslation`。打开托盘菜单中的设置，至少填写一个服务配置、模型、API Key 和目标语言并保存。主触发方式是连续三次空格；备用快捷键默认为 `Ctrl+Alt+F9`（选区）和 `Ctrl+Alt+F10`（整个输入框），可在设置中修改。备用组合被占用时保存仍会成功，三次空格仍可使用。
 
+OpenAI Chat、OpenAI Responses、Anthropic Messages 和 Gemini 服务可在“高级请求设置”中填写 JSON 对象，分别追加自定义请求头和请求体字段。例如请求头 `{"X-Client-Name":"PopoTranslation"}`，或 OpenAI 请求体 `{"temperature":0.2}`；Gemini 可使用 `{"generationConfig":{"temperature":0.2}}`。服务商支持的参数以其文档为准。认证、输入、流式输出等受保护字段不能覆盖；设置会使用当前 Windows 用户的 DPAPI 加密保存，清空输入并保存即可移除。
+
 机器翻译设置中选择对应服务，填写阿里云 AccessKey ID/Secret、百度 APP ID/密钥、有道应用 ID/密钥或 DeepL API Key。DeepL 默认使用免费版地址，付费版需填写官方 API 地址。机器翻译不使用 AI 风格设置；当前只映射部分常用语言，阿里云暂不支持繁体中文。服务商可能限制请求长度或改变换行；不完整的多行结果不会自动回填。真实服务的可用性与费用以各厂商为准。
 
 百炼 Qwen-MT 请选择“百炼 Qwen-MT”，填写对应地域的百炼 API Key，并选择 `qwen-mt-flash`、`qwen-mt-plus` 或 `qwen-mt-lite`。默认使用北京地域，也可选择新加坡或填写业务空间的兼容模式地址；API Key 必须与地域匹配。更多参数及语种限制见 [官方文档](https://docs.bailian.console.aliyun.com/zh/model-studio/machine-translation)。

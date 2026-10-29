@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -26,7 +27,9 @@ public sealed record SettingsForm(
     string SelectionHotkey,
     string WholeControlHotkey,
     string SecondaryCredential = "",
-    bool HasSavedSecondaryCredential = false)
+    bool HasSavedSecondaryCredential = false,
+    string CustomHeadersJson = "",
+    string CustomBodyJson = "")
 {
     public override string ToString() => "SettingsForm { credentials redacted }";
 }
@@ -42,6 +45,7 @@ public sealed partial class SettingsPage : Page
     private string? _loadedProtocol;
     private string? _loadedBaseUrl;
     private readonly Dictionary<string, string> _protocolEndpoints = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (string Headers, string Body)> _protocolAdvanced = new(StringComparer.Ordinal);
     private bool _loadingSettings;
     private bool _busy;
     private bool _applyingResult;
@@ -140,6 +144,10 @@ public sealed partial class SettingsPage : Page
                 Add(toggle.OnContent as string, value => toggle.OnContent = value);
                 Add(toggle.OffContent as string, value => toggle.OffContent = value);
                 break;
+            case Expander expander:
+                Add(expander.Header as string, value => expander.Header = value);
+                CaptureLocalizedProperties(expander.Content);
+                break;
             case InfoBar: break; // Status is refreshed from its original message separately.
             case ScrollViewer scroll: CaptureLocalizedProperties(scroll.Content); break;
             case ContentControl content:
@@ -162,7 +170,11 @@ public sealed partial class SettingsPage : Page
     }
 
     private sealed record Draft(string Name, string Protocol, string BaseUrl, string ModelId, string Timeout,
-        string SourceLanguage, string TargetLanguage, string Style, string SelectionHotkey, string WholeControlHotkey);
+        string SourceLanguage, string TargetLanguage, string Style, string SelectionHotkey, string WholeControlHotkey,
+        string Advanced)
+    {
+        public override string ToString() => "Draft { sensitive values redacted }";
+    }
 
     public Func<SettingsForm, Task<SettingsActionResult>>? SaveRequested { get; set; }
     public Func<SettingsForm, Task<SettingsActionResult>>? TestConnectionRequested { get; set; }
@@ -211,6 +223,11 @@ public sealed partial class SettingsPage : Page
         _loadedBaseUrl = settings.BaseUrl;
         _protocolEndpoints.Clear();
         _protocolEndpoints[settings.Protocol] = settings.BaseUrl;
+        _protocolAdvanced.Clear();
+        if (IsAdvancedProtocol(settings.Protocol))
+            _protocolAdvanced[settings.Protocol] = (settings.CustomHeadersJson ?? string.Empty, settings.CustomBodyJson ?? string.Empty);
+        CustomHeadersBox.Text = IsAdvancedProtocol(settings.Protocol) ? settings.CustomHeadersJson ?? string.Empty : string.Empty;
+        CustomBodyBox.Text = IsAdvancedProtocol(settings.Protocol) ? settings.CustomBodyJson ?? string.Empty : string.Empty;
         _hasSavedApiKey = settings.HasSavedApiKey;
         _hasSavedSecondaryCredential = settings.HasSavedSecondaryCredential;
         NameBox.Text = settings.Name;
@@ -239,7 +256,7 @@ public sealed partial class SettingsPage : Page
         WholeHotkeyBox.Text = settings.WholeControlHotkey;
         _loadingSettings = false;
         UpdateProtocolFields();
-        _baseline = CaptureForm();
+        _baseline = CaptureForm(currentOnly: true);
     }
 
     public void SetProfiles(IReadOnlyList<ProfileOption> profiles, string? activeProfileId)
@@ -284,6 +301,7 @@ public sealed partial class SettingsPage : Page
 
     private string SelectedProtocol => (ProtocolBox.SelectedItem as ComboBoxItem)?.Tag as string ?? string.Empty;
     private static bool IsMachine(string protocol) => protocol is "AlibabaTranslate" or "BaiduTranslate" or "YoudaoTranslate" or "DeepLTranslate" or "QwenMt";
+    private static bool IsAdvancedProtocol(string protocol) => protocol is "OpenAiChatCompletions" or "OpenAiResponses" or "AnthropicMessages" or "GeminiGenerateContent";
     private static bool NeedsModel(string protocol) => !IsMachine(protocol) || protocol == "QwenMt";
     private string SelectedModel => SelectedProtocol == "QwenMt"
         ? (QwenModelBox.SelectedItem as ComboBoxItem)?.Tag as string ?? string.Empty
@@ -349,10 +367,15 @@ public sealed partial class SettingsPage : Page
 
     private void Protocol_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_loadingSettings || ApiKeyBox is null || SecondaryKeyBox is null || MachineSourceLanguageBox is null || BaseUrlBox is null) return;
+        if (_loadingSettings || ApiKeyBox is null || SecondaryKeyBox is null || MachineSourceLanguageBox is null || BaseUrlBox is null || CustomHeadersBox is null || CustomBodyBox is null) return;
         // Keep endpoints per protocol; never carry transient credentials across protocols.
         var previousProtocol = (e.RemovedItems.OfType<ComboBoxItem>().FirstOrDefault()?.Tag as string) ?? string.Empty;
         if (previousProtocol.Length != 0) _protocolEndpoints[previousProtocol] = BaseUrlBox.Text;
+        if (IsAdvancedProtocol(previousProtocol))
+            _protocolAdvanced[previousProtocol] = (CustomHeadersBox.Text, CustomBodyBox.Text);
+        var advanced = _protocolAdvanced.GetValueOrDefault(SelectedProtocol, (string.Empty, string.Empty));
+        CustomHeadersBox.Text = advanced.Item1;
+        CustomBodyBox.Text = advanced.Item2;
         ApiKeyBox.Password = string.Empty;
         SecondaryKeyBox.Password = string.Empty;
         BaseUrlBox.Text = _protocolEndpoints.GetValueOrDefault(SelectedProtocol, string.Empty);
@@ -375,6 +398,7 @@ public sealed partial class SettingsPage : Page
         var machine = IsMachine(protocol);
         var secondary = NeedsSecondary(protocol);
         var qwen = protocol == "QwenMt";
+        AdvancedSettings.Visibility = IsAdvancedProtocol(protocol) ? Visibility.Visible : Visibility.Collapsed;
         ModelBox.Visibility = machine ? Visibility.Collapsed : Visibility.Visible;
         QwenModelBox.Visibility = qwen ? Visibility.Visible : Visibility.Collapsed;
         QwenRegionBox.Visibility = qwen ? Visibility.Visible : Visibility.Collapsed;
@@ -402,10 +426,19 @@ public sealed partial class SettingsPage : Page
 
     private string SelectedTargetLanguage => (TargetLanguageBox.SelectedItem as ComboBoxItem)?.Tag as string ?? string.Empty;
 
-    private Draft CaptureForm() => new(
-        NameBox.Text, (ProtocolBox.SelectedItem as ComboBoxItem)?.Tag as string ?? string.Empty,
-        BaseUrlBox.Text, SelectedModel, TimeoutBox.Text, SelectedSourceLanguage,
-        SelectedTargetLanguage, StyleBox.Text, SelectionHotkeyBox.Text, WholeHotkeyBox.Text);
+    private Draft CaptureForm(bool currentOnly = false)
+    {
+        var advanced = currentOnly
+            ? new Dictionary<string, (string Headers, string Body)>(StringComparer.Ordinal)
+            : new Dictionary<string, (string Headers, string Body)>(_protocolAdvanced, StringComparer.Ordinal);
+        if (IsAdvancedProtocol(SelectedProtocol))
+            advanced[SelectedProtocol] = (CustomHeadersBox.Text, CustomBodyBox.Text);
+        var snapshot = JsonSerializer.Serialize(advanced.Where(pair => pair.Value.Headers.Length != 0 || pair.Value.Body.Length != 0)
+            .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+            .Select(pair => new[] { pair.Key, pair.Value.Headers, pair.Value.Body }));
+        return new Draft(NameBox.Text, SelectedProtocol, BaseUrlBox.Text, SelectedModel, TimeoutBox.Text, SelectedSourceLanguage,
+            SelectedTargetLanguage, StyleBox.Text, SelectionHotkeyBox.Text, WholeHotkeyBox.Text, snapshot);
+    }
 
     private bool HasUnsavedChanges()
     {
@@ -464,6 +497,8 @@ public sealed partial class SettingsPage : Page
                 "请填写服务名称、目标语言，选择服务类型；AI 服务还需填写模型。" when string.IsNullOrEmpty(SelectedTargetLanguage) => TranslationNavigation,
                 _ => ServiceNavigation
             };
+            if (error is "自定义请求头必须为空或有效的 JSON 对象。" or "自定义请求体必须为空或有效的 JSON 对象。")
+                AdvancedSettings.IsExpanded = true;
             SetStatus(error, true);
             return;
         }
@@ -482,7 +517,12 @@ public sealed partial class SettingsPage : Page
                 ApiKeyBox.Password = string.Empty;
                 SecondaryKeyBox.Password = string.Empty;
                 UpdateKeyHint();
-                _baseline = CaptureForm();
+                _baseline = CaptureForm(currentOnly: true);
+            }
+            if (!result.Success && result.Message == "高级请求设置无效，请检查 JSON 和受保护的请求字段。")
+            {
+                Navigation.SelectedItem = ServiceNavigation;
+                AdvancedSettings.IsExpanded = true;
             }
             SetStatus(result.Message, !result.Success);
         }
@@ -518,6 +558,7 @@ public sealed partial class SettingsPage : Page
         QwenRegionBox.IsEnabled = !busy;
         ApiKeyBox.IsEnabled = !busy;
         TimeoutBox.IsEnabled = !busy;
+        AdvancedSettings.IsEnabled = !busy;
         SaveButton.IsEnabled = !busy;
         TestButton.IsEnabled = !busy;
         BusyIndicator.IsActive = busy;
@@ -657,11 +698,34 @@ public sealed partial class SettingsPage : Page
             error = "请输入应用密钥。";
             return false;
         }
+        if (IsAdvancedProtocol(protocol) && !IsJsonObjectOrEmpty(CustomHeadersBox.Text))
+        {
+            error = "自定义请求头必须为空或有效的 JSON 对象。";
+            return false;
+        }
+        if (IsAdvancedProtocol(protocol) && !IsJsonObjectOrEmpty(CustomBodyBox.Text))
+        {
+            error = "自定义请求体必须为空或有效的 JSON 对象。";
+            return false;
+        }
         form = new SettingsForm(_profileId, name, protocol, baseUrl, NeedsModel(protocol) ? model : "", ApiKeyBox.Password,
             CanUseSavedCredential && _hasSavedApiKey, timeout, Optional(SelectedSourceLanguage), target,
             Optional(StyleBox.Text), selection, whole,
-            NeedsSecondary(protocol) ? SecondaryKeyBox.Password : "", CanUseSavedCredential && _hasSavedSecondaryCredential);
+            NeedsSecondary(protocol) ? SecondaryKeyBox.Password : "", CanUseSavedCredential && _hasSavedSecondaryCredential,
+            IsAdvancedProtocol(protocol) && !string.IsNullOrWhiteSpace(CustomHeadersBox.Text) ? CustomHeadersBox.Text : "",
+            IsAdvancedProtocol(protocol) && !string.IsNullOrWhiteSpace(CustomBodyBox.Text) ? CustomBodyBox.Text : "");
         return true;
+    }
+
+    private static bool IsJsonObjectOrEmpty(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return true;
+        try
+        {
+            using var document = JsonDocument.Parse(value);
+            return document.RootElement.ValueKind == JsonValueKind.Object;
+        }
+        catch (JsonException) { return false; }
     }
 
     private static string? Optional(string value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

@@ -20,10 +20,10 @@ public static class TranslationProviderFactory
     /// <summary>Creates a translation provider. The optional HTTP client is a testing or custom transport seam.
     /// Its owner must disable automatic redirects, avoid automatic retries, set an infinite HTTP timeout,
     /// and keep it alive for the provider's lifetime. The provider enforces its own request deadline.</summary>
-    public static ITranslationProvider Create(ProviderProfile profile, string apiKey, HttpClient? httpClient = null) =>
-        Create(profile, apiKey, null, httpClient);
+    public static ITranslationProvider Create(ProviderProfile profile, string apiKey, HttpClient? httpClient = null, AdvancedRequestOptions? advancedOptions = null) =>
+        Create(profile, apiKey, null, httpClient, advancedOptions);
 
-    public static ITranslationProvider Create(ProviderProfile profile, string apiKey, string? secondaryCredential, HttpClient? httpClient = null)
+    public static ITranslationProvider Create(ProviderProfile profile, string apiKey, string? secondaryCredential, HttpClient? httpClient = null, AdvancedRequestOptions? advancedOptions = null)
     {
         ArgumentNullException.ThrowIfNull(profile);
         if (string.IsNullOrWhiteSpace(apiKey)) throw new ArgumentException("Credential is required.", nameof(apiKey));
@@ -36,6 +36,10 @@ public static class TranslationProviderFactory
         if (profile.TimeoutSeconds <= 0) throw new ArgumentException("Timeout must be positive.", nameof(profile));
         var endpoint = ProviderEndpoint.Parse(profile.Protocol, profile.BaseUrl);
         httpClient ??= SharedHttpClient;
+        if (profile.Protocol is ApiProtocol.OpenAiChatCompletions or ApiProtocol.OpenAiResponses or ApiProtocol.AnthropicMessages or ApiProtocol.GeminiGenerateContent)
+            httpClient = AdvancedRequestTransport.Wrap(httpClient, endpoint, profile.Protocol, advancedOptions);
+        else if (advancedOptions is not null && (!string.IsNullOrWhiteSpace(advancedOptions.HeadersJson) || !string.IsNullOrWhiteSpace(advancedOptions.BodyJson)))
+            advancedOptions.Validate(profile.Protocol);
         return profile.Protocol switch
         {
             ApiProtocol.OpenAiChatCompletions => new OpenAiChatTranslationProvider(profile, apiKey, endpoint, httpClient),

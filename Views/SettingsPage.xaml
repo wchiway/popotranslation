@@ -166,6 +166,20 @@
                                      PasswordRevealMode="Hidden" Visibility="Collapsed" AutomationProperties.Name="应用密钥" />
                         <TextBlock x:Name="SecondaryKeyHint" Visibility="Collapsed" TextWrapping="Wrap"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <Expander x:Name="AdvancedSettings" Header="高级请求设置" HorizontalAlignment="Stretch">
+                            <StackPanel Spacing="12" Padding="0,8,0,0">
+                                <TextBlock Text="仅适用于当前 AI 协议。填写 JSON 对象；留空可清除已保存的设置。" TextWrapping="Wrap"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Text="这些内容可能包含敏感信息，将加密保存在本机。API 密钥请使用上方专用密钥输入框；请勿在此输入密码。" TextWrapping="Wrap"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBox x:Name="CustomHeadersBox" Header="自定义请求头 JSON" PlaceholderText="例如：{}"
+                                         AutomationProperties.Name="自定义请求头 JSON" AcceptsReturn="True" TextWrapping="Wrap"
+                                         IsSpellCheckEnabled="False" MinHeight="100" MaxHeight="220" />
+                                <TextBox x:Name="CustomBodyBox" Header="自定义请求体 JSON" PlaceholderText="例如：{}"
+                                         AutomationProperties.Name="自定义请求体 JSON" AcceptsReturn="True" TextWrapping="Wrap"
+                                         IsSpellCheckEnabled="False" MinHeight="120" MaxHeight="260" />
+                            </StackPanel>
+                        </Expander>
                         <TextBox x:Name="TimeoutBox" Header="请求超时（秒）" InputScope="Number"
                                  AutomationProperties.Name="请求超时，单位秒" />
                         <TextBlock Text="连接测试使用简体中文样本翻译为英语，不验证当前语言设置；测试请求可能产生少量费用。" TextWrapping="Wrap"

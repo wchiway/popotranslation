@@ -113,6 +113,25 @@ public class SettingsStoreTests : IDisposable
         var loaded = await new JsonSettingsStore(PathName).LoadAsync(TestContext.Current.CancellationToken);
         Assert.Equal("old-ref", loaded!.Providers[0].CredentialReference);
         Assert.Null(loaded.Providers[0].SecondaryCredentialReference);
+        Assert.Null(loaded.Providers[0].AdvancedConfigurationReference);
+    }
+
+    [Fact]
+    public async Task AdvancedConfigurationReferenceRoundTripsAndRejectsEmptyReference()
+    {
+        var store = new JsonSettingsStore(PathName);
+        var settings = Settings with
+        {
+            Providers = [Settings.Providers[0] with { AdvancedConfigurationReference = "advanced-ref" }]
+        };
+        await store.SaveAsync(settings, TestContext.Current.CancellationToken);
+        var loaded = await store.LoadAsync(TestContext.Current.CancellationToken);
+        Assert.Equal("advanced-ref", loaded!.Providers[0].AdvancedConfigurationReference);
+        Assert.Contains("advanced-ref", await File.ReadAllTextAsync(PathName, TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<InvalidDataException>(() => store.SaveAsync(settings with
+        {
+            Providers = [settings.Providers[0] with { AdvancedConfigurationReference = " " }]
+        }, TestContext.Current.CancellationToken));
     }
 
     [Fact]

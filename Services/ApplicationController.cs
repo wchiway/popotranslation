@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI.Dispatching;
@@ -144,7 +145,7 @@ internal sealed class ApplicationController : IDisposable
             catch { /* The key can be replaced without overwriting the settings file. */ }
             if (_disposed) return;
             var hasSecondary = await HasSecondaryAsync(profile);
-            LoadProfileIntoPage(settings, profile, hasKey, hasSecondary);
+            await LoadProfileIntoPageAsync(settings, profile, hasKey, hasSecondary);
             _initialized = true;
             if (!TryParseHotkey(settings.SelectionHotkey ?? DefaultSelectionHotkey, out var selectionKey) ||
                 !TryParseHotkey(settings.WholeControlHotkey ?? DefaultWholeHotkey, out var wholeKey) ||
@@ -181,12 +182,23 @@ internal sealed class ApplicationController : IDisposable
         catch { return false; }
     }
 
-    private void LoadProfileIntoPage(AppSettings settings, ProviderProfile profile, bool hasKey, bool hasSecondary)
+    private async Task<AdvancedRequestOptions> ReadAdvancedOptionsAsync(ProviderProfile profile, CancellationToken token = default)
     {
+        if (profile.AdvancedConfigurationReference is null) return new AdvancedRequestOptions();
+        var json = await _secrets.ReadAsync(profile.AdvancedConfigurationReference, token)
+            ?? throw new InvalidOperationException("Advanced configuration is unavailable.");
+        return JsonSerializer.Deserialize<AdvancedRequestOptions>(json)
+            ?? throw new InvalidOperationException("Advanced configuration is invalid.");
+    }
+
+    private async Task LoadProfileIntoPageAsync(AppSettings settings, ProviderProfile profile, bool hasKey, bool hasSecondary, AdvancedRequestOptions? advanced = null)
+    {
+        advanced ??= await ReadAdvancedOptionsAsync(profile);
         _page.LoadSettings(new SettingsForm(profile.Id, profile.Name, profile.Protocol.ToString(),
             profile.BaseUrl, profile.ModelId, "", hasKey, profile.TimeoutSeconds, settings.SourceLanguage,
             settings.TargetLanguage, settings.Style, settings.SelectionHotkey ?? DefaultSelectionHotkey,
-            settings.WholeControlHotkey ?? DefaultWholeHotkey, "", hasSecondary));
+            settings.WholeControlHotkey ?? DefaultWholeHotkey, "", hasSecondary,
+            advanced.HeadersJson ?? "", advanced.BodyJson ?? ""));
         _page.SetProfiles(settings.Providers.Select(p => new ProfileOption(p.Id, p.Name)).ToArray(), profile.Id);
     }
 
@@ -204,6 +216,7 @@ internal sealed class ApplicationController : IDisposable
         Invalidate();
         try
         {
+            var advanced = await ReadAdvancedOptionsAsync(profile);
             var next = settings with { ActiveProviderId = profileId };
             await _settingsStore.SaveAsync(next);
             if (_disposed) return new(false, "应用正在退出。");
@@ -212,7 +225,7 @@ internal sealed class ApplicationController : IDisposable
             try { hasKey = !string.IsNullOrWhiteSpace(await _secrets.ReadAsync(profile.CredentialReference)); }
             catch { }
             var hasSecondary = await HasSecondaryAsync(profile);
-            LoadProfileIntoPage(next, profile, hasKey, hasSecondary);
+            await LoadProfileIntoPageAsync(next, profile, hasKey, hasSecondary, advanced);
             var message = hasKey && (!RequiresSecondary(profile.Protocol) || hasSecondary)
                 ? "已切换服务。" : "已切换服务；未找到凭据，请重新输入并保存。";
             if (IsMachine(profile.Protocol))
@@ -258,6 +271,8 @@ internal sealed class ApplicationController : IDisposable
         Invalidate();
         try
         {
+            var nextActive = remaining.FirstOrDefault(p => p.Id == (settings.ActiveProviderId == profileId ? remaining[0].Id : settings.ActiveProviderId)) ?? remaining[0];
+            var advanced = await ReadAdvancedOptionsAsync(nextActive);
             var next = settings with
             {
                 Providers = remaining,
@@ -269,11 +284,12 @@ internal sealed class ApplicationController : IDisposable
             try { await _secrets.DeleteAsync(profile.CredentialReference); } catch { }
             if (profile.SecondaryCredentialReference is not null)
                 try { await _secrets.DeleteAsync(profile.SecondaryCredentialReference); } catch { }
-            var nextActive = remaining.FirstOrDefault(p => p.Id == next.ActiveProviderId) ?? remaining[0];
+            if (profile.AdvancedConfigurationReference is not null)
+                try { await _secrets.DeleteAsync(profile.AdvancedConfigurationReference); } catch { }
             var hasKey = false;
             try { hasKey = !string.IsNullOrWhiteSpace(await _secrets.ReadAsync(nextActive.CredentialReference)); }
             catch { }
-            LoadProfileIntoPage(next, nextActive, hasKey, await HasSecondaryAsync(nextActive));
+            await LoadProfileIntoPageAsync(next, nextActive, hasKey, await HasSecondaryAsync(nextActive), advanced);
             return new(true, "已删除服务配置。");
         }
         catch { return new(false, "删除服务失败，原设置仍然有效。"); }
@@ -292,6 +308,7 @@ internal sealed class ApplicationController : IDisposable
         Invalidate();
         string? newReference = null;
         string? newSecondaryReference = null;
+        string? newAdvancedReference = null;
         var oldSelection = _settings?.SelectionHotkey ?? DefaultSelectionHotkey;
         var oldWhole = _settings?.WholeControlHotkey ?? DefaultWholeHotkey;
         var hadOldHotkeys = _hasRegisteredHotkeys;
@@ -323,7 +340,17 @@ internal sealed class ApplicationController : IDisposable
                 }
                 else profile = profile with { SecondaryCredentialReference = previous!.SecondaryCredentialReference };
             }
-            _ = await Task.Run(() => TranslationProviderFactory.Create(profile, key, secondary));
+            var advanced = IsMachine(profile.Protocol) ? new AdvancedRequestOptions() :
+                new AdvancedRequestOptions(form.CustomHeadersJson, form.CustomBodyJson);
+            try { if (!IsMachine(profile.Protocol)) advanced.Validate(profile.Protocol); }
+            catch (ArgumentException) { return new(false, "高级请求设置无效，请检查 JSON 和受保护的请求字段。"); }
+            if (!IsMachine(profile.Protocol) && (!string.IsNullOrWhiteSpace(form.CustomHeadersJson) || !string.IsNullOrWhiteSpace(form.CustomBodyJson)))
+            {
+                newAdvancedReference = Guid.NewGuid().ToString("N");
+                profile = profile with { AdvancedConfigurationReference = newAdvancedReference };
+            }
+            _ = await Task.Run(() => TranslationProviderFactory.Create(profile, key, secondary, advancedOptions: advanced));
+            if (newAdvancedReference is not null) await _secrets.WriteAsync(newAdvancedReference, JsonSerializer.Serialize(advanced));
             if (newReference is not null) await _secrets.WriteAsync(newReference, key);
             if (newSecondaryReference is not null) await _secrets.WriteAsync(newSecondaryReference, secondary);
             if (_disposed) return new(false, "应用正在退出。");
@@ -348,9 +375,12 @@ internal sealed class ApplicationController : IDisposable
                     try { await _secrets.DeleteAsync(previous.CredentialReference); } catch { }
                 if (previous.SecondaryCredentialReference is not null && previous.SecondaryCredentialReference != profile.SecondaryCredentialReference)
                     try { await _secrets.DeleteAsync(previous.SecondaryCredentialReference); } catch { }
+                if (previous.AdvancedConfigurationReference is not null && previous.AdvancedConfigurationReference != profile.AdvancedConfigurationReference)
+                    try { await _secrets.DeleteAsync(previous.AdvancedConfigurationReference); } catch { }
             }
             newReference = null;
             newSecondaryReference = null;
+            newAdvancedReference = null;
             return new(true, registration.Success
                 ? "设置已保存。连接测试需要手动触发。"
                 : "设置已保存；备用快捷键被占用，但仍可使用连续三次空格。");
@@ -365,6 +395,10 @@ internal sealed class ApplicationController : IDisposable
             if (newSecondaryReference is not null)
             {
                 try { await _secrets.DeleteAsync(newSecondaryReference); } catch { }
+            }
+            if (newAdvancedReference is not null)
+            {
+                try { await _secrets.DeleteAsync(newAdvancedReference); } catch { }
             }
             _saving = false;
         }
@@ -388,10 +422,13 @@ internal sealed class ApplicationController : IDisposable
                 secondary = await _secrets.ReadAsync(previous.SecondaryCredentialReference) ?? "";
             if (string.IsNullOrWhiteSpace(key) || (RequiresSecondary(profile.Protocol) && string.IsNullOrWhiteSpace(secondary)))
                 return new(false, "请输入完整的服务凭据。");
+            var advanced = IsMachine(profile.Protocol) ? new AdvancedRequestOptions() : new AdvancedRequestOptions(form.CustomHeadersJson, form.CustomBodyJson);
+            try { if (!IsMachine(profile.Protocol)) advanced.Validate(profile.Protocol); }
+            catch (ArgumentException) { return new(false, "高级请求设置无效，请检查 JSON 和受保护的请求字段。"); }
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(profile!.TimeoutSeconds));
             var result = await Task.Run(async () =>
             {
-                var provider = TranslationProviderFactory.Create(profile, key, secondary);
+                var provider = TranslationProviderFactory.Create(profile, key, secondary, advancedOptions: advanced);
                 return await provider.TranslateAsync(new TranslationRequest("你好", "English", "简体中文", null), timeout.Token);
             }).WaitAsync(timeout.Token);
             return result.IsSuccessful ? new(true, "连接测试成功。") : new(false, ResultMessage(result));
@@ -470,6 +507,7 @@ internal sealed class ApplicationController : IDisposable
             }
             var key = await _secrets.ReadAsync(profile.CredentialReference, token);
             var secondary = profile.SecondaryCredentialReference is null ? null : await _secrets.ReadAsync(profile.SecondaryCredentialReference, token);
+            var advanced = await ReadAdvancedOptionsAsync(profile, token);
             if (!IsCurrent(generation, token)) return;
             if (string.IsNullOrWhiteSpace(key) || (RequiresSecondary(profile.Protocol) && string.IsNullOrWhiteSpace(secondary)))
             { Notify("找不到服务凭据，请在设置中重新保存。", true); return; }
@@ -490,7 +528,7 @@ internal sealed class ApplicationController : IDisposable
                 {
                     token.ThrowIfCancellationRequested();
                     if (!IsCurrent(generation, token)) throw new OperationCanceledException(token);
-                    return _coordinator.Start(TranslationProviderFactory.Create(profile, key, secondary), request, profile, token);
+                    return _coordinator.Start(TranslationProviderFactory.Create(profile, key, secondary, advancedOptions: advanced), request, profile, token);
                 }
             }, token);
             var result = await operation.Completion;
