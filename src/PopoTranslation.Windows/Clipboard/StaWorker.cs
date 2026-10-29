@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Windows.Threading;
 
 namespace PopoTranslation.Windows.Clipboard;
@@ -63,12 +64,16 @@ internal sealed class StaWorker : IDisposable
 
     private void Run()
     {
+        var initialized = false;
         try
         {
+            Marshal.ThrowExceptionForHR(OleInitialize(0));
+            initialized = true;
             _dispatcher.TrySetResult(Dispatcher.CurrentDispatcher);
             Dispatcher.Run();
         }
         catch (Exception error) { _dispatcher.TrySetException(error); }
+        finally { if (initialized) OleUninitialize(); }
     }
 
     private void Shutdown()
@@ -79,6 +84,12 @@ internal sealed class StaWorker : IDisposable
                 task.Result.BeginInvokeShutdown(DispatcherPriority.Background);
         }, TaskScheduler.Default);
     }
+
+    [DllImport("ole32.dll")]
+    private static extern int OleInitialize(nint reserved);
+
+    [DllImport("ole32.dll")]
+    private static extern void OleUninitialize();
 
     public void Dispose()
     {

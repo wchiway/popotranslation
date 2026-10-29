@@ -3,6 +3,8 @@ using System.Runtime.InteropServices;
 using PopoTranslation.Windows.Input;
 using PopoTranslation.Windows.Diagnostics;
 
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("PopoTranslation.Windows.Tests")]
+
 namespace PopoTranslation.Windows.Clipboard;
 
 public enum ClipboardCaptureStatus { Captured, NoSelection, Unavailable }
@@ -43,17 +45,18 @@ public sealed class ClipboardService : IDisposable
         FocusDiagnostics.Record("clipboard-start");
         if (expectedForeground == 0 || GetForegroundWindow() != expectedForeground)
             return new(ClipboardCaptureStatus.Unavailable, Reason: "目标窗口已失去焦点。");
-        if (!TryReadClipboard(out var oldData, out var reason))
+        var oldData = await TryReadClipboardAsync(cancellationToken);
+        if (oldData is null)
         {
             DiagnosticLog.Write("event=clipboard-read-failed");
-            return new(ClipboardCaptureStatus.Unavailable, Reason: reason);
+            return new(ClipboardCaptureStatus.Unavailable, Reason: "无法安全保存剪贴板内容。");
         }
 
         var sentinel = SentinelPrefix + Guid.NewGuid().ToString("N");
         string? restoreIfCurrent = null;
         try
         {
-            if (!await TrySetTextAsync(sentinel, cancellationToken))
+            if (!await TrySetTextAsync(sentinel, cancellationToken, oldData.Sequence))
             {
                 DiagnosticLog.Write("event=clipboard-sentinel-failed");
                 return new(ClipboardCaptureStatus.Unavailable, Reason: "剪贴板正被其他程序占用。");
@@ -122,7 +125,7 @@ public sealed class ClipboardService : IDisposable
         }
         finally
         {
-            if (restoreIfCurrent is not null) RestoreClipboard(oldData, restoreIfCurrent);
+            if (restoreIfCurrent is not null) await RestoreClipboardAsync(oldData, restoreIfCurrent);
         }
     }
 
@@ -132,8 +135,9 @@ public sealed class ClipboardService : IDisposable
         DiagnosticLog.Write($"event=paste-start selectAll={selectAll} foregroundMatches={GetForegroundWindow() == expectedForeground}");
         cancellationToken.ThrowIfCancellationRequested();
         if (GetForegroundWindow() != expectedForeground) return ClipboardPasteStatus.NotSubmitted;
-        if (!TryReadClipboard(out var oldData, out _)) { DiagnosticLog.Write("event=paste-result stage=read-clipboard"); return ClipboardPasteStatus.NotSubmitted; }
-        if (!await TrySetTextAsync(text, cancellationToken)) { DiagnosticLog.Write("event=paste-result stage=set-clipboard"); return ClipboardPasteStatus.NotSubmitted; }
+        var oldData = await TryReadClipboardAsync(cancellationToken);
+        if (oldData is null) { DiagnosticLog.Write("event=paste-result stage=read-clipboard"); return ClipboardPasteStatus.NotSubmitted; }
+        if (!await TrySetTextAsync(text, cancellationToken, oldData.Sequence)) { DiagnosticLog.Write("event=paste-result stage=set-clipboard"); return ClipboardPasteStatus.NotSubmitted; }
         try
         {
             if (!await WaitForShortcutKeysReleasedAsync(cancellationToken)) { DiagnosticLog.Write("event=paste-result stage=keys-held"); return ClipboardPasteStatus.NotSubmitted; }
@@ -157,34 +161,53 @@ public sealed class ClipboardService : IDisposable
             await Task.Delay(1200);
             return ClipboardPasteStatus.Submitted;
         }
-        finally { RestoreClipboard(oldData, text); }
+        finally { await RestoreClipboardAsync(oldData, text); }
     }
 
-    private static bool TryReadClipboard(out System.Windows.IDataObject? oldData, out string? reason)
+    private static Task<ClipboardBackup?> TryReadClipboardAsync(CancellationToken cancellationToken) =>
+        TryReadClipboardAsync(GetClipboardSequenceNumber, System.Windows.Clipboard.GetDataObject, CountClipboardFormats, cancellationToken);
+
+    internal static async Task<ClipboardBackup?> TryReadClipboardAsync(Func<uint> getSequence,
+        Func<System.Windows.IDataObject?> getData, Func<int> countFormats, CancellationToken cancellationToken)
     {
-        oldData = null;
-        reason = null;
-        var timer = Stopwatch.StartNew();
-        try
+        for (var attempt = 1; attempt <= 2; attempt++)
         {
-            oldData = System.Windows.Clipboard.GetDataObject();
-            DiagnosticLog.Write($"event=clipboard-operation operation=get-data-object status=success elapsedMs={timer.ElapsedMilliseconds} hasData={oldData is not null}");
-            return true;
+            cancellationToken.ThrowIfCancellationRequested();
+            var timer = Stopwatch.StartNew();
+            try
+            {
+                var sequence = getSequence();
+                var source = getData();
+                var empty = source is null && countFormats() == 0;
+                var finalSequence = getSequence();
+                if (source is null && !empty) return null;
+                if (sequence == 0 || sequence != finalSequence)
+                {
+                    if (attempt < 2) { await Task.Delay(40, cancellationToken); continue; }
+                    return null;
+                }
+                DiagnosticLog.Write($"event=clipboard-operation operation=get-data-object status=success attempt={attempt} elapsedMs={timer.ElapsedMilliseconds}");
+                return new ClipboardBackup(source, finalSequence);
+            }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                DiagnosticLog.Write($"event=clipboard-operation operation=get-data-object status=failed attempt={attempt} elapsedMs={timer.ElapsedMilliseconds} type={error.GetType().Name} hresult={error.HResult:X8}");
+                if (error.HResult != unchecked((int)0x800401D0) || attempt == 2) return null;
+                await Task.Delay(40, cancellationToken);
+            }
         }
-        catch (Exception error)
-        {
-            DiagnosticLog.Write($"event=clipboard-operation operation=get-data-object status=failed elapsedMs={timer.ElapsedMilliseconds} type={error.GetType().Name} hresult={error.HResult:X8}");
-            reason = "无法读取剪贴板。";
-            return false;
-        }
+        return null;
     }
 
-    private static async Task<bool> TrySetTextAsync(string text, CancellationToken cancellationToken)
+    internal sealed record ClipboardBackup(System.Windows.IDataObject? Data, uint Sequence);
+
+    private static async Task<bool> TrySetTextAsync(string text, CancellationToken cancellationToken, uint expectedSequence)
     {
         for (var attempt = 0; attempt < 3; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var timer = Stopwatch.StartNew();
+            if (GetClipboardSequenceNumber() != expectedSequence) return false;
             try
             {
                 var data = new System.Windows.DataObject();
@@ -237,27 +260,37 @@ public sealed class ClipboardService : IDisposable
         }
     }
 
-    private static void RestoreClipboard(System.Windows.IDataObject? oldData, string? expectedCurrent)
+    private static Task RestoreClipboardAsync(ClipboardBackup oldData, string expectedCurrent) =>
+        RestoreClipboardAsync(oldData, expectedCurrent, GetClipboardSequenceNumber,
+            () => TryGetText(out var current, logFailure: true) ? current : null,
+            data => { if (data is null) System.Windows.Clipboard.Clear(); else System.Windows.Clipboard.SetDataObject(data, copy: true); });
+
+    internal static async Task RestoreClipboardAsync(ClipboardBackup oldData, string expectedCurrent,
+        Func<uint> getSequence, Func<string?> getText, Action<System.Windows.IDataObject?> restore)
     {
-        var timer = Stopwatch.StartNew();
-        var operation = "check-current";
-        try
+        for (var attempt = 1; attempt <= 2; attempt++)
         {
-            if (expectedCurrent is not null && (!TryGetText(out var current, logFailure: true) || current != expectedCurrent))
+            var timer = Stopwatch.StartNew();
+            try
             {
-                DiagnosticLog.Write($"event=clipboard-operation operation={operation} status=skipped elapsedMs={timer.ElapsedMilliseconds}");
+                var sequence = getSequence();
+                var current = getText();
+                if (sequence == 0 || current is null)
+                {
+                    if (attempt < 2) { await Task.Delay(40); continue; }
+                    return;
+                }
+                if (current != expectedCurrent || getSequence() != sequence) return;
+                restore(oldData.Data);
+                DiagnosticLog.Write($"event=clipboard-operation operation=restore status=success attempt={attempt} elapsedMs={timer.ElapsedMilliseconds}");
                 return;
             }
-            DiagnosticLog.Write($"event=clipboard-operation operation={operation} status=matched elapsedMs={timer.ElapsedMilliseconds}");
-            operation = oldData is not null ? "restore-data-object" : "restore-clear";
-            timer.Restart();
-            if (oldData is not null) System.Windows.Clipboard.SetDataObject(oldData, copy: true);
-            else System.Windows.Clipboard.Clear();
-            DiagnosticLog.Write($"event=clipboard-operation operation={operation} status=success elapsedMs={timer.ElapsedMilliseconds}");
-        }
-        catch (Exception error)
-        {
-            DiagnosticLog.Write($"event=clipboard-operation operation={operation} status=failed elapsedMs={timer.ElapsedMilliseconds} type={error.GetType().Name} hresult={error.HResult:X8}");
+            catch (Exception error)
+            {
+                DiagnosticLog.Write($"event=clipboard-operation operation=restore status=failed attempt={attempt} elapsedMs={timer.ElapsedMilliseconds} type={error.GetType().Name} hresult={error.HResult:X8}");
+                if (error.HResult != unchecked((int)0x800401D0) || attempt == 2) return;
+                await Task.Delay(40);
+            }
         }
     }
 
@@ -267,4 +300,6 @@ public sealed class ClipboardService : IDisposable
     private static extern nint GetForegroundWindow();
     [DllImport("user32.dll")]
     private static extern uint GetClipboardSequenceNumber();
+    [DllImport("user32.dll")]
+    private static extern int CountClipboardFormats();
 }

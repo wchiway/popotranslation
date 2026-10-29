@@ -10,6 +10,37 @@ static void Check(bool condition, string message)
     if (!condition) throw new InvalidOperationException(message);
 }
 
+var clipboardAttempts = 0;
+var backup = await ClipboardService.TryReadClipboardAsync(() => 7, () =>
+{
+    if (++clipboardAttempts == 1) throw new System.Runtime.InteropServices.COMException("busy", unchecked((int)0x800401D0));
+    return null;
+}, () => 0, CancellationToken.None);
+Check(clipboardAttempts == 2 && backup is { Data: null, Sequence: 7 }, "占用后应重试并识别稳定的空剪贴板");
+Check(await ClipboardService.TryReadClipboardAsync(() => 7, () => null, () => 1, CancellationToken.None) is null,
+    "有格式时不得将 null 数据视为空剪贴板");
+var sequenceCalls = 0;
+Check(await ClipboardService.TryReadClipboardAsync(() => (uint)++sequenceCalls, () => null, () => 0, CancellationToken.None) is null,
+    "序列不稳定时不得备份");
+clipboardAttempts = 0;
+Check(await ClipboardService.TryReadClipboardAsync(() => 7, () =>
+{
+    clipboardAttempts++;
+    throw new System.Runtime.InteropServices.COMException("busy", unchecked((int)0x800401D0));
+}, () => 0, CancellationToken.None) is null && clipboardAttempts == 2, "读取占用重试必须有界");
+var restores = 0;
+await ClipboardService.RestoreClipboardAsync(backup!, "临时", () => 9, () => "临时", _ =>
+{
+    restores++;
+    throw new System.Runtime.InteropServices.COMException("busy", unchecked((int)0x800401D0));
+});
+Check(restores == 2, "恢复失败应有界重试");
+restores = 0;
+await ClipboardService.RestoreClipboardAsync(backup!, "临时", () => 9, () => "其他", _ => restores++);
+Check(restores == 0, "剪贴板被更改后不得恢复");
+await ClipboardService.RestoreClipboardAsync(backup!, "临时", () => 9, () => "临时", data => { Check(data is null, "空备份必须恢复为空"); restores++; });
+Check(restores == 1, "匹配时应恢复空剪贴板");
+
 var pathTestRoot = Path.Combine(Path.GetTempPath(), $"popo-paths-{Guid.NewGuid():N}");
 try
 {
@@ -37,6 +68,13 @@ finally
     if (Directory.Exists(pathTestRoot)) Directory.Delete(pathTestRoot, recursive: true);
 }
 
+Check(FocusedEditorReader.IsProtectedPasswordProperty(true, allowUnknownPassword: true) &&
+      FocusedEditorReader.IsProtectedPasswordProperty(true, allowUnknownPassword: false),
+    "显式受保护控件必须拒绝读取，包括兼容目标的 Pane");
+Check(!FocusedEditorReader.IsProtectedPasswordProperty(false, allowUnknownPassword: false) &&
+      FocusedEditorReader.IsProtectedPasswordProperty(null, allowUnknownPassword: false) &&
+      !FocusedEditorReader.IsProtectedPasswordProperty(null, allowUnknownPassword: true),
+    "未受保护与未知属性应遵守目标兼容策略");
 var snapshot = new EditorSnapshot((nint)7, 10, 15, "1,2,3", "重复重复", 0, 2, CaptureMode.Selection);
 Check(snapshot.SourceText == "重复", "选区读取错误");
 Check(EditorSnapshotValidator.Matches(snapshot, snapshot), "相同快照必须匹配");
@@ -45,6 +83,35 @@ Check(!EditorSnapshotValidator.Matches(snapshot, snapshot with { ProcessStartTim
 Check(!EditorSnapshotValidator.Matches(snapshot, snapshot with { ElementRuntimeId = "1,2,4" }), "不同控件不得匹配");
 Check(!EditorSnapshotValidator.Matches(snapshot, snapshot with { DocumentText = "重复重复!" }), "文本变化不得匹配");
 Check(!EditorSnapshotValidator.Matches(snapshot, snapshot with { WindowHandle = (nint)8 }), "窗口变化不得匹配");
+var clipboardCaptureCalls = 0;
+var uiaCaptureCalls = 0;
+EditorSnapshot? ObserveClipboard(EditorSnapshot original, Func<bool> processMatches, CaptureResult uia, string? clipboardText) =>
+    FocusedEditorReader.ObserveClipboardTarget(original, processMatches,
+        () => { uiaCaptureCalls++; return uia; },
+        () => { clipboardCaptureCalls++; return clipboardText; });
+var capturedSnapshot = new CaptureResult(CaptureStatus.Captured, snapshot);
+Check(ObserveClipboard(snapshot, () => true, capturedSnapshot, "重复") == snapshot &&
+      uiaCaptureCalls == 1 && clipboardCaptureCalls == 0, "UIA 快照须使用 UIA 重捕获而非仅比较剪贴板选中文字");
+foreach (var changed in new[]
+{
+    snapshot with { SelectionStart = 2, SelectionEnd = 4 },
+    snapshot with { DocumentText = "重复重复!" },
+    snapshot with { ElementRuntimeId = "1,2,4" },
+    snapshot with { ProcessStartTimeUtcTicks = 16 }
+})
+    Check(ObserveClipboard(snapshot, () => true, new(CaptureStatus.Captured, changed), "重复") is null,
+        "UIA 身份、全文或选区发生变化时不得写入");
+Check(ObserveClipboard(snapshot, () => true, new(CaptureStatus.Unavailable), "重复") is null,
+    "无法稳定重捕获 UIA 时不得降级为剪贴板文字验证");
+var processChecks = 0;
+Check(ObserveClipboard(snapshot, () => ++processChecks == 1, capturedSnapshot, "重复") is null && processChecks == 2,
+    "观察期间进程身份变化不得写入");
+Check(ObserveClipboard(snapshot, () => false, capturedSnapshot, "重复") is null,
+    "进程不一致或启动时间不可得不得写入");
+var clipboardSnapshot = snapshot with { Method = CaptureMethod.Clipboard, ElementRuntimeId = "clipboard", DocumentText = "重复", SelectionEnd = 2 };
+Check(ObserveClipboard(clipboardSnapshot, () => true, new(CaptureStatus.Unavailable), "重复") == clipboardSnapshot &&
+      ObserveClipboard(clipboardSnapshot, () => true, capturedSnapshot, "其他") is null,
+    "剪贴板快照应保留现有的文字核验能力");
 var whole = snapshot with { Mode = CaptureMode.WholeControl };
 var backend = new FakeReplacementBackend { Current = whole };
 Check(EditorReplacer.Replace(snapshot, "译文", backend).Status == ReplacementStatus.ManualApply && backend.Writes == 0,

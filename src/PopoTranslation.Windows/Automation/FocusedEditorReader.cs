@@ -1,10 +1,13 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 using System.Windows.Automation;
 using System.Windows.Automation.Text;
 using PopoTranslation.Windows.Clipboard;
 using PopoTranslation.Windows.Diagnostics;
 using PopoTranslation.Windows.Editing;
+
+[assembly: InternalsVisibleTo("PopoTranslation.Windows.Tests")]
 
 namespace PopoTranslation.Windows.Automation;
 
@@ -144,6 +147,9 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
             ? second : new(CaptureStatus.Unavailable);
     }
 
+    internal static bool IsProtectedPasswordProperty(object? property, bool allowUnknownPassword) =>
+        property is bool isPassword ? isPassword : !allowUnknownPassword;
+
     private static CaptureResult CaptureOnce(CaptureMode mode, nint expectedForegroundHwnd,
         bool allowUnknownPassword = false)
     {
@@ -159,18 +165,13 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
 
         // An unsupported property is not proof of safety for ordinary apps. For known
         // chat input surfaces and text editors, allow the clipboard fallback to handle it.
-        // A custom Pane may report the property as true even though it is a chat input;
-        // only an Edit with an explicit protected flag is treated as a secret field.
+        // An explicit protected flag always prevents reading, regardless of control type.
         var passwordProperty = element.GetCurrentPropertyValue(AutomationElement.IsPasswordProperty);
-        if (passwordProperty is bool isPassword)
-        {
-            if (isPassword && (!allowUnknownPassword || controlType == ControlType.Edit))
-                return new(CaptureStatus.Protected,
-                    Reason: $"UIA 将 {controlType.ProgrammaticName} 标记为受保护；请确认焦点在聊天输入框，而不是密码或支付输入框。");
-        }
-        else if (!allowUnknownPassword)
+        if (IsProtectedPasswordProperty(passwordProperty, allowUnknownPassword))
             return new(CaptureStatus.Protected,
-                Reason: $"UIA 无法确认 {controlType.ProgrammaticName} 是否受保护；请把光标放进聊天输入框后重试。");
+                Reason: passwordProperty is bool
+                    ? $"UIA 将 {controlType.ProgrammaticName} 标记为受保护；请确认焦点在聊天输入框，而不是密码或支付输入框。"
+                    : $"UIA 无法确认 {controlType.ProgrammaticName} 是否受保护；请把光标放进聊天输入框后重试。");
 
         if (controlType != ControlType.Edit &&
             !(mode == CaptureMode.Selection && controlType == ControlType.Document))
@@ -313,6 +314,43 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
         }
     }
 
+    internal static EditorSnapshot? ObserveClipboardTarget(EditorSnapshot snapshot,
+        Func<bool> hasMatchingProcess, Func<CaptureResult> captureUia, Func<string?> captureClipboard)
+    {
+        if (!hasMatchingProcess()) return null;
+        EditorSnapshot? observed;
+        if (snapshot.Method == CaptureMethod.Uia)
+        {
+            var current = captureUia();
+            observed = current.Status == CaptureStatus.Captured && current.Snapshot is not null &&
+                EditorSnapshotValidator.Matches(snapshot, current.Snapshot) ? current.Snapshot : null;
+        }
+        else
+        {
+            var current = captureClipboard();
+            var expected = snapshot.Mode == CaptureMode.Selection ? snapshot.SourceText : snapshot.DocumentText;
+            observed = current is not null && current == expected ? snapshot : null;
+        }
+        return observed is not null && hasMatchingProcess() ? observed : null;
+    }
+
+    private static bool HasMatchingForegroundProcess(EditorSnapshot snapshot)
+    {
+        if (snapshot.WindowHandle == 0 || snapshot.ProcessId <= 0 || snapshot.ProcessStartTimeUtcTicks <= 0 ||
+            GetForegroundWindow() != snapshot.WindowHandle) return false;
+        try
+        {
+            if (GetWindowThreadProcessId(snapshot.WindowHandle, out var processId) == 0 ||
+                processId != (uint)snapshot.ProcessId) return false;
+            using var process = Process.GetProcessById(snapshot.ProcessId);
+            return process.StartTime.ToUniversalTime().Ticks == snapshot.ProcessStartTimeUtcTicks &&
+                GetForegroundWindow() == snapshot.WindowHandle &&
+                GetWindowThreadProcessId(snapshot.WindowHandle, out var finalProcessId) != 0 &&
+                finalProcessId == processId;
+        }
+        catch { return false; }
+    }
+
     private sealed class ClipboardReplacementBackend(EditorSnapshot snapshot, ClipboardService clipboard, CancellationToken cancellationToken, Func<bool>? isCurrent, Action? onPasteSubmitted) : IReplacementBackend
     {
         private bool _pasted;
@@ -321,25 +359,24 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
 
         public EditorSnapshot? ObserveEligibleTarget()
         {
-            if (GetForegroundWindow() != snapshot.WindowHandle) return null;
-            GetWindowThreadProcessId(snapshot.WindowHandle, out var processId);
-            if ((int)processId != snapshot.ProcessId) return null;
-            var current = clipboard.Capture(snapshot.WindowHandle,
-                selectAll: snapshot.Mode == CaptureMode.WholeControl, cancellationToken: cancellationToken);
-            if (current.Status != ClipboardCaptureStatus.Captured || current.Text is null)
-            {
-                DiagnosticLog.Write($"event=replace-observe status=capture-failed captureStatus={current.Status}");
-                return null;
-            }
-            var expected = snapshot.Mode == CaptureMode.Selection ? snapshot.SourceText : snapshot.DocumentText;
-            var matches = current.Text == expected;
-            DiagnosticLog.Write($"event=replace-observe status={(matches ? "matched" : "text-changed")}");
-            return matches ? snapshot : null;
+            return ObserveClipboardTarget(snapshot, () => HasMatchingForegroundProcess(snapshot),
+                () => CaptureStable(snapshot.Mode, snapshot.WindowHandle,
+                    snapshot.TargetKind is TargetKind.Social or TargetKind.TextEditor),
+                () =>
+                {
+                    var current = clipboard.Capture(snapshot.WindowHandle,
+                        selectAll: snapshot.Mode == CaptureMode.WholeControl, cancellationToken: cancellationToken);
+                    return current.Status == ClipboardCaptureStatus.Captured ? current.Text : null;
+                });
         }
 
         public ReplacementSubmission SetValue(string text)
         {
-            var status = clipboard.Paste(snapshot.WindowHandle, text, snapshot.Mode == CaptureMode.WholeControl, cancellationToken: cancellationToken, isCurrent: isCurrent, onSubmitted: onPasteSubmitted);
+            if (!HasMatchingForegroundProcess(snapshot)) return ReplacementSubmission.NotSubmitted;
+            var status = clipboard.Paste(snapshot.WindowHandle, text, snapshot.Mode == CaptureMode.WholeControl,
+                cancellationToken: cancellationToken,
+                isCurrent: () => (isCurrent is null || isCurrent()) && HasMatchingForegroundProcess(snapshot),
+                onSubmitted: onPasteSubmitted);
             _pasted = status == ClipboardPasteStatus.Submitted;
             return ClipboardPasteSubmission.FromClipboardStatus(status);
         }
