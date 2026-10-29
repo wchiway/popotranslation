@@ -55,3 +55,7 @@ PopoTranslation 是一个 Windows 桌面翻译工具。程序常驻系统托盘�
 在 Visual Studio 中打开 `popotranslation.slnx`，选择 `x64` 配置。环境要求、构建和测试方法见 [开发与构建](docs/development.md)；模块关系见 [架构说明](docs/architecture.md)。
 
 GitHub Actions 提供测试及手动触发的正式版／预发布版工作流，具体用法见 [CI 说明](docs/ci.md)。构建成功不代表完成安装、升级、卸载或目标应用兼容性验收；发布前请检查 [发布检查清单](docs/release-checklist.md)。
+
+## 许可证
+
+本项目采用 [Apache License 2.0](LICENSE)。
