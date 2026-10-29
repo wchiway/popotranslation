@@ -27,7 +27,7 @@ PopoTranslation 是一个使用 C#、.NET 10 和 WinUI 3 构建的 Windows 桌�
 | 输入框交互 | Windows UI Automation、Win32 |
 | AI | OpenAI、Anthropic、Google.GenAI 官方 .NET SDK，独立协议适配 |
 | 配置 | JSON 普通设置与 DPAPI 用户凭据保护 |
-| 部署 | 目前以 Unpackaged 桌面开发/运行流程为主 |
+| 部署 | Unpackaged 桌面应用，支持构建 EXE 安装程序 |
 
 依赖版本锁定在项目中；构建前请阅读 [开发与构建](docs/development.md)。
 
@@ -55,4 +55,4 @@ OpenAI Chat、OpenAI Responses、Anthropic Messages 和 Gemini 服务可在“�
 
 ## 开发
 
-构建、测试和已知限制见 [docs/development.md](docs/development.md)；安装包构建基础见 [docs/installation.md](docs/installation.md)；模块关系见 [docs/architecture.md](docs/architecture.md)。
+构建、测试和已知限制见 [docs/development.md](docs/development.md)；EXE 安装包构建方法见 [docs/installation.md](docs/installation.md)；模块关系见 [docs/architecture.md](docs/architecture.md)。
