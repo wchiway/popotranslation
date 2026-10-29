@@ -90,8 +90,10 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           if (-not (Test-Path -LiteralPath $vswhere)) { throw 'vswhere is missing.' }
-          $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
-          if ($LASTEXITCODE -ne 0 -or -not $msbuild -or -not (Test-Path -LiteralPath $msbuild)) { throw 'Visual Studio MSBuild is missing.' }
+          $msbuildPaths = @(& $vswhere -latest -products '*' -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe')
+          if ($LASTEXITCODE -ne 0) { throw "vswhere failed with exit code $LASTEXITCODE." }
+          $msbuild = $msbuildPaths | Select-Object -First 1
+          if (-not $msbuild -or -not (Test-Path -LiteralPath $msbuild)) { throw 'Visual Studio MSBuild is missing.' }
           if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { throw '.NET SDK is missing.' }
           "MSBUILD_PATH=$msbuild" >> $env:GITHUB_ENV
 
