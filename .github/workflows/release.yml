@@ -1,6 +1,9 @@
 name: Build and release
 
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       version:
@@ -14,11 +17,6 @@ on:
         options:
           - release
           - prerelease
-      publish:
-        description: 'Create and publish the GitHub release after a successful build'
-        required: true
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -29,6 +27,7 @@ concurrency:
 
 jobs:
   test:
+    if: ${{ github.event_name != 'push' || (github.event.created && !github.event.deleted) }}
     uses: ./.github/workflows/test.yml
     permissions:
       contents: read
@@ -40,12 +39,20 @@ jobs:
       - name: Validate request
         shell: pwsh
         env:
-          VERSION: ${{ inputs.version }}
-          CHANNEL: ${{ inputs.channel }}
-          PUBLISH: ${{ inputs.publish }}
-          SOURCE_REF: ${{ github.ref }}
+          EVENT_NAME: ${{ github.event_name }}
+          TAG_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_CHANNEL: ${{ inputs.channel }}
         run: |
           $ErrorActionPreference = 'Stop'
+          if ($env:EVENT_NAME -eq 'push') {
+            if (-not $env:TAG_NAME.StartsWith('v')) { throw 'Expected a v-prefixed tag.' }
+            $env:VERSION = $env:TAG_NAME.Substring(1)
+            $env:CHANNEL = if ($env:VERSION.Contains('-')) { 'prerelease' } else { 'release' }
+          } else {
+            $env:VERSION = $env:INPUT_VERSION
+            $env:CHANNEL = $env:INPUT_CHANNEL
+          }
           if ($env:VERSION.Length -gt 100 -or $env:VERSION -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$') {
             throw 'Version must be a three-part SemVer version without build metadata or a v prefix.'
           }
@@ -63,12 +70,13 @@ jobs:
           if ($env:CHANNEL -ceq 'release' -and $suffix) { throw 'A release version cannot have a prerelease suffix.' }
           if ($env:CHANNEL -ceq 'prerelease' -and -not $suffix) { throw 'A prerelease version must have a prerelease suffix.' }
           if ($env:CHANNEL -cnotin @('release', 'prerelease')) { throw 'Unknown release channel.' }
-          if ($env:PUBLISH -eq 'true' -and $env:SOURCE_REF -cne 'refs/heads/main') { throw 'Publishing is only allowed from main.' }
           "APP_VERSION=$($parts -join '.')" >> $env:GITHUB_ENV
+          "VERSION=$env:VERSION" >> $env:GITHUB_ENV
 
       - name: Checkout selected commit
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Install .NET SDK
@@ -111,8 +119,6 @@ jobs:
 
       - name: Publish x64 self-contained application and build installer
         shell: pwsh
-        env:
-          VERSION: ${{ inputs.version }}
         run: |
           $ErrorActionPreference = 'Stop'
           $publish = Join-Path $env:RUNNER_TEMP 'popo-publish'
@@ -143,7 +149,7 @@ jobs:
           retention-days: 14
 
   release:
-    if: ${{ inputs.publish && github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'push' && github.event.created && !github.event.deleted }}
     needs: build
     runs-on: windows-2025
     permissions:
@@ -152,6 +158,7 @@ jobs:
       - name: Checkout complete history and tags
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -161,40 +168,69 @@ jobs:
           name: release-files
           path: release-files
 
-      - name: Generate release description with DeepSeek
-        shell: pwsh
-        env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          VERSION: ${{ inputs.version }}
-          COMMIT_SHA: ${{ github.sha }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $tag = "v$env:VERSION"
-          python -I -B scripts/release_commit_range.py --commit $env:COMMIT_SHA --tag $tag --output "$env:RUNNER_TEMP/commits.json" --metadata "$env:RUNNER_TEMP/range.json"
-          if ($LASTEXITCODE -ne 0) { throw 'Could not determine the release commit range.' }
-          python -I -B scripts/generate_release_notes.py --commits "$env:RUNNER_TEMP/commits.json" --output "$env:RUNNER_TEMP/release-notes.md"
-          if ($LASTEXITCODE -ne 0) { throw 'DeepSeek release description generation failed; no tag was created.' }
-
-      - name: Create new tag and publish release
+      - name: Verify existing tag and release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          VERSION: ${{ inputs.version }}
-          CHANNEL: ${{ inputs.channel }}
+          TAG: ${{ github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
+          EVENT_AFTER: ${{ github.event.after }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+          $base = "https://api.github.com/repos/$env:GH_REPO"
+          $ref = Invoke-RestMethod -Uri "$base/git/ref/tags/$env:TAG" -Headers $headers
+          $raw = $ref.object.sha
+          if ($ref.object.type -cnotin @('tag', 'commit')) { throw 'Tag does not refer to a commit or annotated tag.' }
+          $localRaw = (git rev-parse --verify "refs/tags/$env:TAG")
+          if ($LASTEXITCODE -ne 0 -or $localRaw -cne $raw) { throw 'Local and remote tag objects differ.' }
+          $target = (git rev-parse --verify "refs/tags/$env:TAG^{commit}")
+          if ($LASTEXITCODE -ne 0 -or $target -cne $env:COMMIT_SHA) { throw 'Tag does not point to the tested commit.' }
+          $head = (git rev-parse HEAD)
+          if ($LASTEXITCODE -ne 0 -or $head -cne $env:COMMIT_SHA) { throw 'Checkout does not match the tested commit.' }
+          git merge-base --is-ancestor $env:COMMIT_SHA refs/remotes/origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'The tested commit must be an ancestor of main.' }
+          if ($env:EVENT_AFTER -cne $raw -and $env:EVENT_AFTER -cne $target) { throw 'Tag no longer matches the push event.' }
+          try {
+            Invoke-RestMethod -Uri "$base/releases/tags/$env:TAG" -Headers $headers | Out-Null
+            throw 'A release already exists for this tag.'
+          } catch {
+            if ($_.Exception.Response.StatusCode.value__ -ne 404) { throw }
+          }
+          "TAG_OBJECT=$raw" >> $env:GITHUB_ENV
+
+      - name: Generate release description with DeepSeek
+        shell: pwsh
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          TAG: ${{ github.ref_name }}
           COMMIT_SHA: ${{ github.sha }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $tag = "v$env:VERSION"
+          $tag = $env:TAG
+          python -I -B scripts/release_commit_range.py --commit $env:COMMIT_SHA --tag $tag --output "$env:RUNNER_TEMP/commits.json" --metadata "$env:RUNNER_TEMP/range.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not determine the release commit range.' }
+          python -I -B scripts/generate_release_notes.py --commits "$env:RUNNER_TEMP/commits.json" --output "$env:RUNNER_TEMP/release-notes.md"
+          if ($LASTEXITCODE -ne 0) { throw 'DeepSeek release description generation failed.' }
+
+      - name: Publish release for existing tag
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = $env:TAG
           $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
           $base = "https://api.github.com/repos/$env:GH_REPO"
-          foreach ($endpoint in @("git/ref/tags/$tag", "releases/tags/$tag")) {
-            try {
-              Invoke-RestMethod -Uri "$base/$endpoint" -Headers $headers | Out-Null
-              throw "Tag or release already exists: $tag"
-            } catch {
-              if ($_.Exception.Response.StatusCode.value__ -ne 404) { throw }
-            }
+          try {
+            Invoke-RestMethod -Uri "$base/releases/tags/$tag" -Headers $headers | Out-Null
+            throw "Release already exists: $tag"
+          } catch {
+            if ($_.Exception.Response.StatusCode.value__ -ne 404) { throw }
           }
           # Recheck the tag range after generation; outside publishers may have changed it.
           $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("x-access-token:$env:GH_TOKEN"))
@@ -211,16 +247,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Could not recheck the release commit range.' }
           if ((Get-FileHash "$env:RUNNER_TEMP/range.json").Hash -ne (Get-FileHash "$env:RUNNER_TEMP/range-recheck.json").Hash -or
               (Get-FileHash "$env:RUNNER_TEMP/commits.json").Hash -ne (Get-FileHash "$env:RUNNER_TEMP/commits-recheck.json").Hash) { throw 'Release commit range changed during generation; rerun the workflow.' }
-          # GitHub rejects an existing ref atomically, including a competing run.
-          $body = @{ ref = "refs/tags/$tag"; sha = $env:COMMIT_SHA } | ConvertTo-Json -Compress
-          Invoke-RestMethod -Method Post -Uri "$base/git/refs" -Headers $headers -ContentType 'application/json' -Body $body | Out-Null
           $ref = Invoke-RestMethod -Uri "$base/git/ref/tags/$tag" -Headers $headers
-          if ($ref.object.type -cne 'commit' -or $ref.object.sha -cne $env:COMMIT_SHA) { throw 'Tag does not point to the tested commit.' }
+          $localRaw = (git rev-parse --verify "refs/tags/$tag")
+          if ($LASTEXITCODE -ne 0 -or $ref.object.sha -cne $env:TAG_OBJECT -or $localRaw -cne $env:TAG_OBJECT) { throw 'Tag moved during the workflow.' }
+          $target = (git rev-parse --verify "refs/tags/$tag^{commit}")
+          if ($LASTEXITCODE -ne 0 -or $target -cne $env:COMMIT_SHA) { throw 'Tag no longer points to the tested commit.' }
           $files = @(Get-ChildItem -LiteralPath 'release-files' -File | ForEach-Object { $_.FullName })
           if ($files.Count -ne 3) { throw 'Expected installer, application archive, and checksums.' }
           $notesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
           Add-Content -LiteralPath $notesPath -Encoding utf8 -Value "`n`n---`n安装器显示三段数字基础版本。应用和安装包未进行 Authenticode 签名；自动化测试不能替代干净机器上的安装、升级、卸载和运行验证。"
           $arguments = @('release', 'create', $tag) + $files + @('--verify-tag', '--title', $tag, '--notes-file', $notesPath)
-          if ($env:CHANNEL -ceq 'prerelease') { $arguments += '--prerelease' }
+          if ($tag.Contains('-')) { $arguments += '--prerelease' }
           & gh @arguments
-          if ($LASTEXITCODE -ne 0) { throw 'Release creation failed; the new tag or a draft release may remain and must be inspected manually.' }
+          if ($LASTEXITCODE -ne 0) { throw 'Release creation failed; a draft release may remain and must be inspected manually.' }
