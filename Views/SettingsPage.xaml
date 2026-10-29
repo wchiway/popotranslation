@@ -11,6 +11,7 @@
             <NavigationViewItem x:Name="ResultNavigation" Content="翻译结果" Icon="Document" Tag="result" />
             <NavigationViewItem x:Name="HistoryNavigation" Content="历史记录" Icon="Clock" Tag="history" />
             <NavigationViewItem x:Name="AppNavigation" Content="应用设置" Icon="Manage" Tag="app" />
+            <NavigationViewItem x:Name="AboutNavigation" Content="关于" Icon="Help" Tag="about" />
         </NavigationView.MenuItems>
         <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
             <Grid.RowDefinitions>
@@ -37,9 +38,25 @@
                                 <ComboBoxItem Content="浅色" Tag="Light" />
                                 <ComboBoxItem Content="深色" Tag="Dark" />
                             </ComboBox>
+                            <ToggleSwitch x:Name="StartupToggle" Header="开机自启动" IsEnabled="False" OnContent="开启" OffContent="关闭" Toggled="Startup_Toggled" />
+                            <TextBlock Text="登录 Windows 后启动应用。Windows 启动应用设置可能影响此选项；移动程序前请先关闭。" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                             <ToggleSwitch x:Name="NotificationsToggle" Header="通知" IsEnabled="False" OnContent="开启" OffContent="关闭" Toggled="AppSettings_Toggled" />
                             <ToggleSwitch x:Name="VerifyReplacementToggle" Header="回填后检测" IsEnabled="False" OnContent="开启" OffContent="关闭" Toggled="AppSettings_Toggled" />
                             <TextBlock Text="关闭后跳过回填提交后的确认检查；写入前的安全验证仍然执行。" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                    </Border>
+                    <Border x:Name="AboutPage" Visibility="Collapsed" Padding="20" CornerRadius="8"
+                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                        <StackPanel Spacing="12">
+                            <TextBlock Text="关于" Style="{StaticResource SubtitleTextBlockStyle}" />
+                            <TextBlock Text="PopoTranslation" Style="{StaticResource TitleTextBlockStyle}" />
+                            <TextBlock Text="Windows 桌面翻译工具" TextWrapping="Wrap" />
+                            <TextBlock Text="版本" />
+                            <TextBlock x:Name="AboutVersion" IsTextSelectionEnabled="True" />
+                            <TextBlock Text="许可证：Apache License 2.0" TextWrapping="Wrap" />
+                            <HyperlinkButton Content="项目主页" NavigateUri="https://github.com/wchiway/popotranslation" />
+                            <HyperlinkButton Content="许可证全文" NavigateUri="https://github.com/wchiway/popotranslation/blob/main/LICENSE" />
                         </StackPanel>
                     </Border>
                     <StackPanel x:Name="TranslationPage" Visibility="Collapsed" Spacing="20">

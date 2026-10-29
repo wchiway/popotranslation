@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
+using popotranslation.Services;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
@@ -64,6 +66,7 @@ public sealed partial class SettingsPage : Page
     private ComboBoxItem? _savedTargetLanguageItem;
     private ComboBoxItem? _savedQwenModelItem;
     private bool _updatingApplicationSettings = true;
+    private bool _updatingStartup;
     private string _language = "zh-CN";
     private string _statusMessage = "保存设置后，使用快捷键开始翻译。";
     private bool _statusWasSet;
@@ -114,6 +117,36 @@ public sealed partial class SettingsPage : Page
         if (chinese.StartsWith(unknownPrefix, StringComparison.Ordinal) && chinese.EndsWith(unknownSuffix, StringComparison.Ordinal))
             return $"UIA cannot determine whether {chinese[unknownPrefix.Length..^unknownSuffix.Length]} is protected. Put the cursor in a chat input box and try again.";
         return chinese;
+    }
+
+    private void RefreshStartup()
+    {
+        _updatingStartup = true;
+        try
+        {
+            StartupToggle.IsOn = StartupRegistration.IsEnabled();
+            StartupToggle.IsEnabled = true;
+        }
+        catch (Exception)
+        {
+            StartupToggle.IsEnabled = false;
+            SetStatus("无法读取开机自启动设置。", true);
+        }
+        finally { _updatingStartup = false; }
+    }
+
+    private void Startup_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_updatingStartup) return;
+        try
+        {
+            StartupRegistration.SetEnabled(StartupToggle.IsOn);
+        }
+        catch (Exception)
+        {
+            RefreshStartup();
+            SetStatus("无法更改开机自启动设置；请检查 Windows 设置或已有启动项。", true);
+        }
     }
 
     private void AppSettings_SelectionChanged(object sender, SelectionChangedEventArgs e) => OnApplicationSettingsChanged();
@@ -214,6 +247,8 @@ public sealed partial class SettingsPage : Page
     {
         InitializeComponent();
         CaptureLocalizedProperties(Content);
+        var version = typeof(SettingsPage).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        AboutVersion.Text = version?.Split('+')[0] ?? typeof(SettingsPage).Assembly.GetName().Version?.ToString() ?? "—";
         SelectionHotkeyBox.AddHandler(UIElement.PreviewKeyDownEvent, new KeyEventHandler(Hotkey_KeyDown), true);
         WholeHotkeyBox.AddHandler(UIElement.PreviewKeyDownEvent, new KeyEventHandler(Hotkey_KeyDown), true);
         Navigation.SelectionChanged += Navigation_SelectionChanged;
@@ -228,6 +263,7 @@ public sealed partial class SettingsPage : Page
         if (args.SelectedItem is NavigationViewItem item && item.Tag is string page)
         {
             ShowPage(page);
+            if (page == "app") RefreshStartup();
             if (page == "history") _ = RefreshHistoryAsync();
             else { _historyGeneration++; _historyRefreshPending = false; }
         }
@@ -240,6 +276,7 @@ public sealed partial class SettingsPage : Page
         ResultPage.Visibility = page == "result" ? Visibility.Visible : Visibility.Collapsed;
         HistoryPage.Visibility = page == "history" ? Visibility.Visible : Visibility.Collapsed;
         AppPage.Visibility = page == "app" ? Visibility.Visible : Visibility.Collapsed;
+        AboutPage.Visibility = page == "about" ? Visibility.Visible : Visibility.Collapsed;
         ServiceActions.Visibility = page is "service" or "translation" ? Visibility.Visible : Visibility.Collapsed;
         PageScroll.ChangeView(null, 0, null);
     }

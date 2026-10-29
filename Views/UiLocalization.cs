@@ -7,6 +7,9 @@ internal static class UiLocalization
 {
     internal static readonly IReadOnlyDictionary<string, string> English = new Dictionary<string, string>
     {
+        ["关于"] = "About", ["Windows 桌面翻译工具"] = "Windows desktop translation tool", ["版本"] = "Version", ["许可证：Apache License 2.0"] = "License: Apache License 2.0", ["项目主页"] = "Project website", ["许可证全文"] = "Full license",
+        ["开机自启动"] = "Start with Windows", ["登录 Windows 后启动应用。Windows 启动应用设置可能影响此选项；移动程序前请先关闭。"] = "Start the app after signing in to Windows. Windows startup settings may affect this option; turn it off before moving the app.",
+        ["无法读取开机自启动设置。"] = "Could not read the startup setting.", ["无法更改开机自启动设置；请检查 Windows 设置或已有启动项。"] = "Could not change the startup setting. Check Windows settings or an existing startup entry.",
         ["历史记录"] = "History", ["原文和译文以明文保存在本机 SQLite 数据库中。历史和缓存分别存储，清空其中一项不会清空另一项。"] = "Original text and translations are stored in plaintext in a local SQLite database. History and cache are stored separately; clearing one does not clear the other.",
         ["仅显示最近记录的简短摘要。可复制完整译文。"] = "Only short previews of recent records are shown. You can copy the full translation.", ["刷新历史"] = "Refresh history", ["清空历史"] = "Clear history", ["清空缓存"] = "Clear cache", ["暂无历史记录。"] = "No history yet.",
         ["原文"] = "Original", ["译文"] = "Translation", ["复制译文"] = "Copy translation", ["译文已复制到剪贴板。"] = "Translation copied to the clipboard.", ["无法复制译文，请重试。"] = "Could not copy the translation. Try again.",
