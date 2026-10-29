@@ -8,6 +8,7 @@ using popotranslation.Views;
 using PopoTranslation.Core;
 using PopoTranslation.Infrastructure.Secrets;
 using PopoTranslation.Infrastructure.Settings;
+using PopoTranslation.Infrastructure.Storage;
 using PopoTranslation.Providers;
 using PopoTranslation.Windows.Automation;
 using PopoTranslation.Windows.Editing;
@@ -35,6 +36,10 @@ internal sealed class ApplicationController : IDisposable
     private bool _preferencesUnavailable;
     private long _preferencesVersion;
     private readonly WindowsSecretStore _secrets;
+    private readonly ITranslationStore _translationStore;
+    private readonly SemaphoreSlim _historyGate = new(1, 1);
+    private long _historyEpoch;
+    private long _cacheEpoch;
     private readonly TranslationCoordinator _coordinator = new();
     private readonly object _startGate = new();
     private readonly FocusedEditorReader _editor = new();
@@ -66,6 +71,10 @@ internal sealed class ApplicationController : IDisposable
         _preferencesStore = new JsonApplicationPreferencesStore(System.IO.Path.Combine(directory, "preferences.json"));
         _page.ApplicationSettingsChanged += OnApplicationSettingsChanged;
         _secrets = new WindowsSecretStore(System.IO.Path.Combine(directory, "secrets"));
+        _translationStore = new SqliteTranslationStore(System.IO.Path.Combine(directory, "translations.db"));
+        _page.LoadHistoryAsync = LoadHistoryAsync;
+        _page.ClearHistoryAsync = ClearHistoryAsync;
+        _page.ClearCacheAsync = ClearCacheAsync;
         _page.SaveRequested = SaveAsync;
         _page.TestConnectionRequested = TestConnectionAsync;
         _page.SelectProfileRequested = SelectProfileAsync;
@@ -165,6 +174,38 @@ internal sealed class ApplicationController : IDisposable
             _settingsUnavailable = true;
             _page.SetStatus("无法读取设置或密钥；现有文件未修改，请检查后重启。", true);
         }
+    }
+
+    private async Task<System.Collections.Generic.IReadOnlyList<HistoryDisplayItem>> LoadHistoryAsync()
+    {
+        var entries = await Task.Run(() => _translationStore.GetHistoryAsync(50));
+        return entries.Select(entry => new HistoryDisplayItem(entry.CreatedAt, entry.SourceText, entry.TranslatedText)).ToArray();
+    }
+
+    private async Task<SettingsActionResult> ClearHistoryAsync()
+    {
+        await _historyGate.WaitAsync();
+        try
+        {
+            await Task.Run(() => _translationStore.ClearHistoryAsync());
+            Interlocked.Increment(ref _historyEpoch);
+            return new(true, "历史记录已清空。");
+        }
+        catch { return new(false, "无法清空历史记录。"); }
+        finally { _historyGate.Release(); }
+    }
+
+    private async Task<SettingsActionResult> ClearCacheAsync()
+    {
+        await _historyGate.WaitAsync();
+        try
+        {
+            await Task.Run(() => _translationStore.ClearCacheAsync());
+            Interlocked.Increment(ref _cacheEpoch);
+            return new(true, "翻译缓存已清空。");
+        }
+        catch { return new(false, "无法清空翻译缓存。"); }
+        finally { _historyGate.Release(); }
     }
 
     private void RefreshProfileList()
@@ -488,6 +529,8 @@ internal sealed class ApplicationController : IDisposable
         _pending?.Dispose();
         _pending = new CancellationTokenSource();
         var token = _pending.Token;
+        var historyEpoch = Interlocked.Read(ref _historyEpoch);
+        var cacheEpoch = Interlocked.Read(ref _cacheEpoch);
         var settings = _settings;
         var profile = settings?.Providers.FirstOrDefault(p => p.Id == settings.ActiveProviderId);
         if (!_initialized || settings is null || profile is null)
@@ -521,6 +564,10 @@ internal sealed class ApplicationController : IDisposable
             }
             var request = new TranslationRequest(TranslationLineBreaks.ToWindows(sourceText), settings.TargetLanguage, settings.SourceLanguage,
                 IsMachine(profile.Protocol) ? null : settings.Style);
+            var cacheContext = new TranslationCacheContext(request, profile.Id, profile.Protocol, profile.BaseUrl, profile.ModelId,
+                profile.CredentialReference, profile.SecondaryCredentialReference, advanced.HeadersJson, advanced.BodyJson);
+            var provider = new CachedTranslationProvider(
+                TranslationProviderFactory.Create(profile, key, secondary, advancedOptions: advanced), _translationStore, cacheContext);
             var translationStarted = Environment.TickCount64;
             var operation = await Task.Run(() =>
             {
@@ -528,7 +575,7 @@ internal sealed class ApplicationController : IDisposable
                 {
                     token.ThrowIfCancellationRequested();
                     if (!IsCurrent(generation, token)) throw new OperationCanceledException(token);
-                    return _coordinator.Start(TranslationProviderFactory.Create(profile, key, secondary, advancedOptions: advanced), request, profile, token);
+                    return _coordinator.Start(provider, request, profile, token);
                 }
             }, token);
             var result = await operation.Completion;
@@ -536,6 +583,7 @@ internal sealed class ApplicationController : IDisposable
             if (!IsCurrent(generation, token)) return;
             if (!result.IsSuccessful || result.Text is null) { Notify(ResultMessage(result), true); return; }
             var translatedText = TranslationLineBreaks.ToWindows(result.Text);
+            _ = SaveTranslationAsync(cacheContext, translatedText, provider.CacheHit, historyEpoch, cacheEpoch, generation, token);
             var replacementStarted = Environment.TickCount64;
             Task<ReplacementResult>? replacementTask = null;
             replacementTask = _editor.ReplaceAsync(capture.Snapshot, translatedText, action =>
@@ -573,6 +621,26 @@ internal sealed class ApplicationController : IDisposable
         {
             if (IsCurrent(generation, token)) Notify("翻译失败，请检查输入框和服务设置。", true);
         }
+    }
+
+    private async Task SaveTranslationAsync(TranslationCacheContext context, string text, bool cacheHit,
+        long historyEpoch, long cacheEpoch, long generation, CancellationToken token)
+    {
+        try
+        {
+            await _historyGate.WaitAsync(token);
+            try
+            {
+                if (!IsCurrent(generation, token)) return;
+                var saveHistory = historyEpoch == Interlocked.Read(ref _historyEpoch);
+                var saveCache = cacheEpoch == Interlocked.Read(ref _cacheEpoch) && !cacheHit;
+                if (!saveHistory && !saveCache) return;
+                await Task.Run(() => _translationStore.SaveSuccessAsync(context, text, cacheHit, saveHistory, saveCache, token), token);
+            }
+            finally { _historyGate.Release(); }
+        }
+        catch (OperationCanceledException) { }
+        catch { DiagnosticLog.Write("event=translation-store-write-failed"); }
     }
 
     private bool IsCurrent(long generation) =>

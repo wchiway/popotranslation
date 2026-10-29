@@ -11,6 +11,7 @@ PopoTranslation 是一个使用 C#、.NET 10 和 WinUI 3 构建的 Windows 桌�
 - 多个翻译服务配置的新增、切换和删除；密钥使用当前 Windows 用户的 DPAPI 保护。
 - 四种 AI 协议：OpenAI Chat Completions、OpenAI Responses、Anthropic Messages、Google Gemini 原生 generateContent。
 - 机器翻译服务：阿里云、百度翻译、有道智云、DeepL，以及百炼 Qwen-MT 专用翻译接口；账号凭据分别使用 DPAPI 保护。
+- 使用 SQLite 保存翻译历史和缓存，相同文本与翻译配置命中缓存时无需再次调用服务。
 - 手动连接测试；连接测试不会在保存设置时自动执行。
 - 过期任务、取消、超时、拒绝、截断和思考块过滤。
 - 单实例运行：再次启动会唤醒已有实例。
@@ -50,7 +51,7 @@ OpenAI Chat、OpenAI Responses、Anthropic Messages 和 Gemini 服务可在“�
 
 程序写入的临时标记和译文会请求 Windows 不将其加入剪贴板历史或同步到其他设备。通过目标应用复制的原文不受该标记控制，仍可能出现在系统或第三方剪贴板历史中；既有历史记录不会自动删除。
 
-工具不会自动发送消息，不记录原文或译文，也不自动执行原文中的指令。API Key 和个人配置仅保存在本机，不进入仓库。
+翻译历史和缓存保存在本机 `%LOCALAPPDATA%\PopoTranslation\translations.db` SQLite 数据库中，包含明文原文和译文；历史页面显示最近 50 条记录，可分别清空历史和缓存；数据不会自动过期或限量，清空也不保证对磁盘残留进行安全擦除。缓存仅在文本及相关翻译配置相同时复用，服务端模型更新不会自动使旧缓存失效，可手动清空缓存。工具不会自动发送消息或执行原文中的指令。API Key 和个人配置仅保存在本机，不进入仓库。
 
 ## 开发
 

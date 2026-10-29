@@ -9,6 +9,7 @@
             <NavigationViewItem x:Name="ServiceNavigation" Content="翻译服务" Icon="Setting" Tag="service" />
             <NavigationViewItem x:Name="TranslationNavigation" Content="翻译设置" Icon="Edit" Tag="translation" />
             <NavigationViewItem x:Name="ResultNavigation" Content="翻译结果" Icon="Document" Tag="result" />
+            <NavigationViewItem x:Name="HistoryNavigation" Content="历史记录" Icon="Clock" Tag="history" />
             <NavigationViewItem x:Name="AppNavigation" Content="应用设置" Icon="Manage" Tag="app" />
         </NavigationView.MenuItems>
         <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
@@ -184,6 +185,25 @@
                                  AutomationProperties.Name="请求超时，单位秒" />
                         <TextBlock Text="连接测试使用简体中文样本翻译为英语，不验证当前语言设置；测试请求可能产生少量费用。" TextWrapping="Wrap"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+                </Border>
+
+                <Border x:Name="HistoryPage" Visibility="Collapsed" Padding="20" CornerRadius="8"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                    <StackPanel Spacing="16">
+                        <TextBlock Text="历史记录" Style="{StaticResource SubtitleTextBlockStyle}" />
+                        <TextBlock Text="原文和译文以明文保存在本机 SQLite 数据库中。历史和缓存分别存储，清空其中一项不会清空另一项。" TextWrapping="Wrap"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Text="仅显示最近记录的简短摘要。可复制完整译文。" TextWrapping="Wrap"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <Button x:Name="RefreshHistoryButton" Content="刷新历史" Click="RefreshHistory_Click" />
+                            <Button x:Name="ClearHistoryButton" Content="清空历史" Click="ClearHistory_Click" />
+                            <Button x:Name="ClearCacheButton" Content="清空缓存" Click="ClearCache_Click" />
+                        </StackPanel>
+                        <TextBlock x:Name="HistoryEmptyText" Text="暂无历史记录。" TextWrapping="Wrap" />
+                        <StackPanel x:Name="HistoryItems" Spacing="12" />
                     </StackPanel>
                 </Border>
 

@@ -7,6 +7,11 @@ internal static class UiLocalization
 {
     internal static readonly IReadOnlyDictionary<string, string> English = new Dictionary<string, string>
     {
+        ["历史记录"] = "History", ["原文和译文以明文保存在本机 SQLite 数据库中。历史和缓存分别存储，清空其中一项不会清空另一项。"] = "Original text and translations are stored in plaintext in a local SQLite database. History and cache are stored separately; clearing one does not clear the other.",
+        ["仅显示最近记录的简短摘要。可复制完整译文。"] = "Only short previews of recent records are shown. You can copy the full translation.", ["刷新历史"] = "Refresh history", ["清空历史"] = "Clear history", ["清空缓存"] = "Clear cache", ["暂无历史记录。"] = "No history yet.",
+        ["原文"] = "Original", ["译文"] = "Translation", ["复制译文"] = "Copy translation", ["译文已复制到剪贴板。"] = "Translation copied to the clipboard.", ["无法复制译文，请重试。"] = "Could not copy the translation. Try again.",
+        ["历史记录功能尚未连接。"] = "History is not connected yet.", ["无法加载历史记录，请重试。"] = "Could not load history. Try again.", ["清空历史记录？"] = "Clear history?", ["清空翻译缓存？"] = "Clear translation cache?", ["这会删除所有历史记录，不会清空翻译缓存。"] = "This deletes all history but does not clear the translation cache.", ["这会清空翻译缓存，不会删除历史记录。"] = "This clears the translation cache but does not delete history.", ["清空"] = "Clear", ["历史记录已清空。"] = "History cleared.", ["翻译缓存已清空。"] = "Translation cache cleared.", ["无法清空历史记录，请重试。"] = "Could not clear history. Try again.", ["无法清空翻译缓存，请重试。"] = "Could not clear the translation cache. Try again.",
+        ["无法清空历史记录。"] = "Could not clear history.", ["无法清空翻译缓存。"] = "Could not clear the translation cache.",
         ["配置翻译语言、默认触发方式和服务连接。"] = "Configure translation languages, shortcuts, and service connections.",
         ["准备就绪"] = "Ready", ["保存设置后，使用快捷键开始翻译。"] = "Save your settings, then use a shortcut to translate.",
         ["应用设置"] = "App settings", ["界面语言"] = "Display language", ["主题"] = "Theme", ["跟随系统"] = "Use system setting", ["浅色"] = "Light", ["深色"] = "Dark", ["通知"] = "Notifications", ["开启"] = "On", ["关闭"] = "Off",

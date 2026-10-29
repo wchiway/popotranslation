@@ -37,6 +37,11 @@ public sealed record SettingsForm(
 public sealed record SettingsActionResult(bool Success, string Message);
 public sealed record ProfileOption(string Id, string Name);
 
+public sealed record HistoryDisplayItem(DateTimeOffset CreatedAt, string SourceText, string TranslatedText)
+{
+    public override string ToString() => "HistoryDisplayItem { text redacted }";
+}
+
 public sealed partial class SettingsPage : Page
 {
     private string _profileId = Guid.NewGuid().ToString("N");
@@ -59,6 +64,12 @@ public sealed partial class SettingsPage : Page
     private string _statusMessage = "保存设置后，使用快捷键开始翻译。";
     private bool _statusWasSet;
     private readonly List<(Action<string> Set, string Original)> _localizedProperties = [];
+    private bool _historyBusy;
+    private int _historyGeneration;
+    private bool _historyRefreshPending;
+    private IReadOnlyList<HistoryDisplayItem> _visibleHistory = [];
+    private const int MaxVisibleHistory = 50;
+    private const int HistoryPreviewLength = 120;
 
     public event Action<string, string, bool>? ApplicationSettingsChanged;
 
@@ -167,6 +178,7 @@ public sealed partial class SettingsPage : Page
         StatusBar.Title = Localize(_statusWasSet ? (StatusBar.Severity == InfoBarSeverity.Error ? "需要注意" : "状态") : "准备就绪");
         StatusBar.Message = Localize(_statusMessage);
         if (!_loadingSettings) UpdateProtocolFields();
+        RenderHistory();
     }
 
     private sealed record Draft(string Name, string Protocol, string BaseUrl, string ModelId, string Timeout,
@@ -183,6 +195,9 @@ public sealed partial class SettingsPage : Page
     public Func<string, Task<SettingsActionResult>>? SelectProfileRequested { get; set; }
     public Func<Task<SettingsActionResult>>? AddProfileRequested { get; set; }
     public Func<string, Task<SettingsActionResult>>? DeleteProfileRequested { get; set; }
+    public Func<Task<IReadOnlyList<HistoryDisplayItem>>>? LoadHistoryAsync { get; set; }
+    public Func<Task<SettingsActionResult>>? ClearHistoryAsync { get; set; }
+    public Func<Task<SettingsActionResult>>? ClearCacheAsync { get; set; }
 
     public SettingsPage()
     {
@@ -198,7 +213,11 @@ public sealed partial class SettingsPage : Page
     private void Navigation_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
         if (args.SelectedItem is NavigationViewItem item && item.Tag is string page)
+        {
             ShowPage(page);
+            if (page == "history") _ = RefreshHistoryAsync();
+            else { _historyGeneration++; _historyRefreshPending = false; }
+        }
     }
 
     private void ShowPage(string page)
@@ -206,12 +225,138 @@ public sealed partial class SettingsPage : Page
         ServiceCard.Visibility = page == "service" ? Visibility.Visible : Visibility.Collapsed;
         TranslationPage.Visibility = page == "translation" ? Visibility.Visible : Visibility.Collapsed;
         ResultPage.Visibility = page == "result" ? Visibility.Visible : Visibility.Collapsed;
+        HistoryPage.Visibility = page == "history" ? Visibility.Visible : Visibility.Collapsed;
         AppPage.Visibility = page == "app" ? Visibility.Visible : Visibility.Collapsed;
         ServiceActions.Visibility = page is "service" or "translation" ? Visibility.Visible : Visibility.Collapsed;
         PageScroll.ChangeView(null, 0, null);
     }
 
     public void ShowResultPage() => Navigation.SelectedItem = ResultNavigation;
+
+    // Call on the UI thread. A refresh requested during an operation is coalesced.
+    public async Task RefreshHistoryAsync()
+    {
+        if (!ReferenceEquals(Navigation.SelectedItem, HistoryNavigation)) return;
+        if (_historyBusy) { _historyRefreshPending = true; _historyGeneration++; return; }
+        var load = LoadHistoryAsync;
+        if (load is null) { SetStatus("历史记录功能尚未连接。", true); return; }
+        var generation = ++_historyGeneration;
+        SetHistoryBusy(true);
+        try
+        {
+            var records = await load();
+            if (generation != _historyGeneration || !ReferenceEquals(Navigation.SelectedItem, HistoryNavigation)) return;
+            _visibleHistory = records.Take(MaxVisibleHistory).ToArray();
+            RenderHistory();
+        }
+        catch (Exception)
+        {
+            if (generation == _historyGeneration && ReferenceEquals(Navigation.SelectedItem, HistoryNavigation))
+                SetStatus("无法加载历史记录，请重试。", true);
+        }
+        finally
+        {
+            SetHistoryBusy(false);
+            if (_historyRefreshPending && ReferenceEquals(Navigation.SelectedItem, HistoryNavigation))
+            {
+                _historyRefreshPending = false;
+                await RefreshHistoryAsync();
+            }
+        }
+    }
+
+    private void RenderHistory()
+    {
+        HistoryItems.Children.Clear();
+        HistoryEmptyText.Visibility = _visibleHistory.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var item in _visibleHistory)
+        {
+            var panel = new StackPanel { Spacing = 6 };
+            panel.Children.Add(new TextBlock { Text = item.CreatedAt.ToLocalTime().ToString("g") });
+            panel.Children.Add(new TextBlock { Text = Localize("原文") + "：" + HistoryPreview(item.SourceText), TextWrapping = TextWrapping.Wrap });
+            panel.Children.Add(new TextBlock { Text = Localize("译文") + "：" + HistoryPreview(item.TranslatedText), TextWrapping = TextWrapping.Wrap });
+            var copy = new Button { Content = Localize("复制译文"), IsEnabled = !string.IsNullOrEmpty(item.TranslatedText) };
+            copy.Click += (_, _) => CopyHistory(item.TranslatedText);
+            panel.Children.Add(copy);
+            HistoryItems.Children.Add(new Border
+            {
+                Padding = new Thickness(12),
+                CornerRadius = new CornerRadius(6),
+                Child = panel
+            });
+        }
+    }
+
+    private static string HistoryPreview(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return string.Empty;
+        var length = Math.Min(text.Length, HistoryPreviewLength);
+        if (length < text.Length && char.IsHighSurrogate(text[length - 1]) && char.IsLowSurrogate(text[length])) length--;
+        return text[..length].Replace('\r', ' ').Replace('\n', ' ') + (length < text.Length ? "…" : string.Empty);
+    }
+
+    private void CopyHistory(string text)
+    {
+        try
+        {
+            var data = new DataPackage();
+            data.SetText(text);
+            Clipboard.SetContent(data);
+            SetStatus("译文已复制到剪贴板。");
+        }
+        catch (Exception) { SetStatus("无法复制译文，请重试。", true); }
+    }
+
+    private void SetHistoryBusy(bool busy)
+    {
+        _historyBusy = busy;
+        RefreshHistoryButton.IsEnabled = !busy;
+        ClearHistoryButton.IsEnabled = !busy;
+        ClearCacheButton.IsEnabled = !busy;
+    }
+
+    private async void RefreshHistory_Click(object sender, RoutedEventArgs e) => await RefreshHistoryAsync();
+    private async void ClearHistory_Click(object sender, RoutedEventArgs e) => await ClearHistoryOrCacheAsync(true);
+    private async void ClearCache_Click(object sender, RoutedEventArgs e) => await ClearHistoryOrCacheAsync(false);
+
+    private async Task ClearHistoryOrCacheAsync(bool history)
+    {
+        if (_historyBusy) return;
+        var action = history ? ClearHistoryAsync : ClearCacheAsync;
+        if (action is null) { SetStatus("此功能尚未连接。", true); return; }
+        SetHistoryBusy(true);
+        try
+        {
+            var dialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = Localize(history ? "清空历史记录？" : "清空翻译缓存？"),
+                Content = Localize(history ? "这会删除所有历史记录，不会清空翻译缓存。" : "这会清空翻译缓存，不会删除历史记录。"),
+                PrimaryButtonText = Localize("清空"),
+                CloseButtonText = Localize("取消"),
+                DefaultButton = ContentDialogButton.Close
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            var result = await action();
+            if (result.Success && history)
+            {
+                _historyGeneration++;
+                _visibleHistory = [];
+                RenderHistory();
+            }
+            SetStatus(result.Success ? (history ? "历史记录已清空。" : "翻译缓存已清空。") : (history ? "无法清空历史记录，请重试。" : "无法清空翻译缓存，请重试。"), !result.Success);
+        }
+        catch (Exception) { SetStatus(history ? "无法清空历史记录，请重试。" : "无法清空翻译缓存，请重试。", true); }
+        finally
+        {
+            SetHistoryBusy(false);
+            if (_historyRefreshPending && ReferenceEquals(Navigation.SelectedItem, HistoryNavigation))
+            {
+                _historyRefreshPending = false;
+                await RefreshHistoryAsync();
+            }
+        }
+    }
 
     public void LoadSettings(SettingsForm settings)
     {
