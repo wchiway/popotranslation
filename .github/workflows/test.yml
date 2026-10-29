@@ -40,3 +40,9 @@ jobs:
 
       - name: Run Windows checks
         run: dotnet run --project tests/PopoTranslation.Windows.Tests/PopoTranslation.Windows.Tests.csproj --configuration Debug
+
+      - name: Test release description generation
+        run: python -I -B -m unittest discover -s scripts -p "test_*.py" -v
+
+      - name: Test release commit ranges
+        run: python -I -B -m unittest discover -s tests -p "test_release_commit_range.py" -v
