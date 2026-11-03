@@ -339,6 +339,9 @@ using (var worker = new AutomationWorker())
     var result = await fresh.InvokeAsync(() => 3, CancellationToken.None);
     Check(result is { Accepted: true, Value: 3 }, "新 worker 应正常接受调用");
 }
+Check(TargetApplication.GetProcessName((uint)Environment.ProcessId) == Path.GetFileNameWithoutExtension(Environment.ProcessPath),
+    "按进程 ID 取名应与当前进程可执行文件名一致");
+Check(TargetApplication.GetProcessName(0u) is null, "进程 ID 为 0 时应返回 null");
 Console.WriteLine("Windows 安全快照、快捷键与目标识别检查通过。");
 
 sealed class FakeReplacementBackend : IReplacementBackend

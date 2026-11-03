@@ -66,10 +66,23 @@ public sealed class SpaceSequenceHotkeyService : IDisposable
         return processId == (uint)Environment.ProcessId;
     }
 
-    private static bool IsTerminalForeground()
+    private nint _classifiedWindow;
+    private uint _classifiedProcessId;
+    private bool _classifiedTerminal;
+
+    // Window handles can be reused by other processes, so the cache key includes the process id.
+    private bool IsTerminalForeground()
     {
         var window = GetForegroundWindow();
-        return window != 0 && TargetApplication.ClassifyWindow(window) == TargetKind.Terminal;
+        if (window == 0) return false;
+        GetWindowThreadProcessId(window, out var processId);
+        if (window != _classifiedWindow || processId != _classifiedProcessId)
+        {
+            _classifiedTerminal = TargetApplication.ClassifyWindow(window) == TargetKind.Terminal;
+            _classifiedWindow = window;
+            _classifiedProcessId = processId;
+        }
+        return _classifiedTerminal;
     }
 
     public void Dispose()
