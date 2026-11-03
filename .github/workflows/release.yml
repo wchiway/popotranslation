@@ -79,6 +79,15 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Verify project version matches release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          [xml]$project = Get-Content -LiteralPath popotranslation.csproj -Raw
+          $declared = @($project.Project.PropertyGroup.Version | Where-Object { $_ }) | Select-Object -First 1
+          if (-not $declared) { throw 'popotranslation.csproj must declare <Version>.' }
+          if ($declared -cne $env:VERSION) { throw "popotranslation.csproj declares $declared but this release is $env:VERSION. Commit the version bump first." }
+
       - name: Install .NET SDK
         uses: actions/setup-dotnet@d4c94342e560b34958eacfc5d055d21461ed1c5d # v5.0.0
         with:
