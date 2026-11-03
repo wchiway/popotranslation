@@ -74,4 +74,11 @@
     <!-- UI strings are localized in code; framework satellite assemblies for other languages are not needed. -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
+  <!-- These assemblies load on first translation, not at startup; keep them as IL to save ~19 MiB. -->
+  <ItemGroup>
+    <PublishReadyToRunExclude Include="OpenAI.dll" />
+    <PublishReadyToRunExclude Include="Anthropic.dll" />
+    <PublishReadyToRunExclude Include="Google.GenAI.dll" />
+    <PublishReadyToRunExclude Include="Newtonsoft.Json.dll" />
+  </ItemGroup>
 </Project>
