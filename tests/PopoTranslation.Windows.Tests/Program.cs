@@ -1,5 +1,6 @@
 using PopoTranslation.Windows.Automation;
 using PopoTranslation.Windows.Clipboard;
+using PopoTranslation.Windows.Diagnostics;
 using PopoTranslation.Windows.Editing;
 using PopoTranslation.Windows.Hotkeys;
 using PopoTranslation.Windows.Messaging;
@@ -342,6 +343,24 @@ using (var worker = new AutomationWorker())
 Check(TargetApplication.GetProcessName((uint)Environment.ProcessId) == Path.GetFileNameWithoutExtension(Environment.ProcessPath),
     "按进程 ID 取名应与当前进程可执行文件名一致");
 Check(TargetApplication.GetProcessName(0u) is null, "进程 ID 为 0 时应返回 null");
+var logRoot = Path.Combine(Path.GetTempPath(), $"popo-logs-{Guid.NewGuid():N}");
+try
+{
+    Directory.CreateDirectory(logRoot);
+    for (var i = 0; i < 12; i++)
+    {
+        var file = Path.Combine(logRoot, $"diagnostics-2026010{i:D2}-000000-000-{i}.log");
+        File.WriteAllText(file, "x");
+        File.SetLastWriteTimeUtc(file, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddMinutes(i));
+    }
+    File.WriteAllText(Path.Combine(logRoot, "crash.log"), "keep");
+    Check(DiagnosticLog.PruneLogFiles(logRoot, 9) == 3, "应删除最旧的 3 个诊断日志");
+    var remaining = Directory.GetFiles(logRoot, "diagnostics-*.log");
+    Check(remaining.Length == 9 && remaining.All(f => int.Parse(Path.GetFileNameWithoutExtension(f).Split('-')[^1]) >= 3), "应保留最新的 9 个");
+    Check(File.Exists(Path.Combine(logRoot, "crash.log")), "崩溃日志不在轮转范围内");
+    Check(DiagnosticLog.PruneLogFiles(Path.Combine(logRoot, "missing"), 9) == 0, "目录不存在时返回 0");
+}
+finally { if (Directory.Exists(logRoot)) Directory.Delete(logRoot, true); }
 Console.WriteLine("Windows 安全快照、快捷键与目标识别检查通过。");
 
 sealed class FakeReplacementBackend : IReplacementBackend
