@@ -71,5 +71,7 @@
     <PublishReadyToRun Condition="'$(Configuration)' != 'Debug'">True</PublishReadyToRun>
     <!-- WinUI, XAML and JSON reflection are not trim-safe; do not enable PublishTrimmed. -->
     <PublishTrimmed>False</PublishTrimmed>
+    <!-- UI strings are localized in code; framework satellite assemblies for other languages are not needed. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 </Project>
