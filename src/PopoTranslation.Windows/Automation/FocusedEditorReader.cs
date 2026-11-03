@@ -27,8 +27,28 @@ public static class ClipboardPasteSubmission
 public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
 {
     private const int MaxTextLength = 1_000_000;
-    private readonly AutomationWorker _worker = new();
+    // Longer than any legitimate capture (8 s) or replacement; a worker busy this long is treated as lost.
+    private static readonly TimeSpan WorkerStallThreshold = TimeSpan.FromSeconds(20);
+    private readonly object _workerGate = new();
+    private AutomationWorker _worker = new();
     private readonly ClipboardService _clipboard = new();
+
+    private AutomationWorker Worker
+    {
+        get
+        {
+            lock (_workerGate)
+            {
+                if (_worker.IsStalled(WorkerStallThreshold))
+                {
+                    DiagnosticLog.Write("event=uia-worker-replaced");
+                    _worker.Dispose();
+                    _worker = new AutomationWorker();
+                }
+                return _worker;
+            }
+        }
+    }
 
     public static nint GetForegroundWindowAtTrigger() => GetForegroundWindow();
 
@@ -44,7 +64,7 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
         CaptureResult uia;
         try
         {
-            var (accepted, result) = await _worker.InvokeAsync(
+            var (accepted, result) = await Worker.InvokeAsync(
                 () => CaptureStable(mode, expectedForegroundHwnd, allowUnknownPassword), cancellationToken);
             uia = accepted && result is not null ? result : new(CaptureStatus.Busy);
         }
@@ -115,7 +135,7 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
             : new NativeReplacementBackend(snapshot, _clipboard, cancellationToken, isCurrent, onPasteSubmitted);
         try
         {
-            var (accepted, result) = await _worker.InvokeAsync(() =>
+            var (accepted, result) = await Worker.InvokeAsync(() =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 return executeIfCurrent(() =>
@@ -392,7 +412,7 @@ public sealed class FocusedEditorReader : IFocusedEditor, IDisposable
 
     public void Dispose()
     {
-        _worker.Dispose();
+        lock (_workerGate) _worker.Dispose();
         _clipboard.Dispose();
     }
 

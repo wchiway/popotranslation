@@ -321,6 +321,24 @@ Check(TargetApplication.ClassifyProcessName("TelegramDesktop") == TargetKind.Soc
 Check(TargetApplication.ClassifyProcessName("WindowsTerminal") == TargetKind.Terminal, "Windows Terminal 应识别为终端");
 Check(TargetApplication.ClassifyProcessName("notepad") == TargetKind.TextEditor, "记事本应允许剪贴板兼容读取");
 Check(TargetApplication.ClassifyProcessName("chrome") == TargetKind.Standard, "浏览器不属于自动剪贴板兼容目标");
+using (var release = new ManualResetEventSlim(false))
+using (var worker = new AutomationWorker())
+{
+    using var callerTimeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+    var cancelled = false;
+    try { await worker.InvokeAsync(() => { release.Wait(); return 1; }, callerTimeout.Token); }
+    catch (OperationCanceledException) { cancelled = true; }
+    Check(cancelled, "调用方超时后应收到取消");
+    Check(worker.IsStalled(TimeSpan.Zero), "动作未结束时应报告停滞");
+    Check(!(await worker.InvokeAsync(() => 2, CancellationToken.None)).Accepted, "停滞的 worker 必须拒绝新调用");
+    release.Set();
+    var deadline = Environment.TickCount64 + 2000;
+    while (worker.IsStalled(TimeSpan.Zero) && Environment.TickCount64 < deadline) await Task.Delay(20);
+    Check(!worker.IsStalled(TimeSpan.Zero), "动作结束后停滞状态应清除");
+    using var fresh = new AutomationWorker();
+    var result = await fresh.InvokeAsync(() => 3, CancellationToken.None);
+    Check(result is { Accepted: true, Value: 3 }, "新 worker 应正常接受调用");
+}
 Console.WriteLine("Windows 安全快照、快捷键与目标识别检查通过。");
 
 sealed class FakeReplacementBackend : IReplacementBackend
