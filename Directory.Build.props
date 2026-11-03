@@ -1,0 +1,7 @@
+﻿<Project>
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <!-- Central package management applies to .csproj only; the WiX project under installer/ has no package references. -->
+    <ManagePackageVersionsCentrally Condition="'$(MSBuildProjectExtension)' == '.csproj'">true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+</Project>

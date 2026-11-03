@@ -14,7 +14,6 @@
     <WinUISDKReferences>false</WinUISDKReferences>
     <WindowsPackageType>None</WindowsPackageType>
     <EnableMsixTooling>true</EnableMsixTooling>
-    <Nullable>enable</Nullable>
   </PropertyGroup>
 
   <ItemGroup>
@@ -46,8 +45,8 @@
     <ProjectCapability Include="Msix" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.6.5" />
-    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4654" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="src\PopoTranslation.Core\PopoTranslation.Core.csproj" />
