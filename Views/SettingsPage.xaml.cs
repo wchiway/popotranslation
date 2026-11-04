@@ -128,6 +128,7 @@ public sealed partial class SettingsPage : Page
         try
         {
             var service = new ReleaseUpdateService();
+            _ = Task.Run(() => ReleaseUpdateService.CleanUpStaleDownloads(TimeSpan.FromDays(1)));
             SetStatus("正在检查更新…");
             var check = await service.CheckForUpdateAsync(AboutVersion.Text);
             if (!check.IsUpdateAvailable) { SetStatus("当前已是最新版本。"); return; }
@@ -143,25 +144,34 @@ public sealed partial class SettingsPage : Page
             if (HasUnsavedChanges() || _busy) { SetStatus("请先保存未完成的设置。", true); return; }
             SetStatus("正在下载安装程序…");
             var download = await service.DownloadInstallerAsync(check.Release);
-            SetStatus("安装程序已下载。");
-            if (HasUnsavedChanges() || _busy) { SetStatus("请先保存未完成的设置。", true); return; }
-            var installDialog = new ContentDialog
-            {
-                XamlRoot = XamlRoot,
-                Title = Localize("安装更新？"),
-                Content = Localize("下载完成。应用将退出，安装程序可能请求管理员权限。安装包未签名，请确认来源后继续。"),
-                PrimaryButtonText = Localize("安装"), CloseButtonText = Localize("取消"),
-                DefaultButton = ContentDialogButton.Close
-            };
-            if (await installDialog.ShowAsync() != ContentDialogResult.Primary) return;
-            if (HasUnsavedChanges() || _busy) { SetStatus("请先保存未完成的设置。", true); return; }
+            var installerStarted = false;
             try
             {
-                if (ExitForUpdate is null) throw new InvalidOperationException();
-                using var installer = Process.Start(new ProcessStartInfo(download.FilePath) { UseShellExecute = true }) ?? throw new InvalidOperationException();
-                ExitForUpdate();
+                SetStatus("安装程序已下载。");
+                if (HasUnsavedChanges() || _busy) { SetStatus("请先保存未完成的设置。", true); return; }
+                var installDialog = new ContentDialog
+                {
+                    XamlRoot = XamlRoot,
+                    Title = Localize("安装更新？"),
+                    Content = Localize("下载完成。应用将退出，安装程序可能请求管理员权限。安装包未签名，请确认来源后继续。"),
+                    PrimaryButtonText = Localize("安装"), CloseButtonText = Localize("取消"),
+                    DefaultButton = ContentDialogButton.Close
+                };
+                if (await installDialog.ShowAsync() != ContentDialogResult.Primary) return;
+                if (HasUnsavedChanges() || _busy) { SetStatus("请先保存未完成的设置。", true); return; }
+                try
+                {
+                    if (ExitForUpdate is null) throw new InvalidOperationException();
+                    using var installer = Process.Start(new ProcessStartInfo(download.FilePath) { UseShellExecute = true, Arguments = "/UPDATE=1" }) ?? throw new InvalidOperationException();
+                    installerStarted = true;
+                    ExitForUpdate();
+                }
+                catch (Exception) { SetStatus("无法启动安装程序，请重试。", true); }
             }
-            catch (Exception) { SetStatus("无法启动安装程序，请重试。", true); }
+            finally
+            {
+                if (!installerStarted) ReleaseUpdateService.DeleteDownload(download);
+            }
         }
         catch (Exception) { SetStatus("无法检查或下载更新，请检查网络后重试。", true); }
         finally { CheckUpdateButton.IsEnabled = true; }

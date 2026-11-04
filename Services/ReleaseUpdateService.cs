@@ -567,19 +567,55 @@ internal sealed class ReleaseUpdateService
         return new ReleaseUpdateException(ReleaseUpdateError.HttpStatus, message, statusCode: statusCode);
     }
 
+    private static string DownloadRoot => Path.Combine(Path.GetTempPath(), ProductName, "updates");
+
     private static DirectoryInfo CreateDownloadDirectory()
     {
         try
         {
-            var root = Path.Combine(Path.GetTempPath(), ProductName, "updates");
-            Directory.CreateDirectory(root);
-            return Directory.CreateDirectory(Path.Combine(root, "download-" + Guid.NewGuid().ToString("N")));
+            Directory.CreateDirectory(DownloadRoot);
+            return Directory.CreateDirectory(Path.Combine(DownloadRoot, "download-" + Guid.NewGuid().ToString("N")));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             throw new ReleaseUpdateException(
                 ReleaseUpdateError.DownloadFailed, "无法创建安装器临时目录。", ex);
         }
+    }
+
+    /// <summary>Deletes a downloaded installer and its isolated directory, for example after the user declines to install.</summary>
+    public static void DeleteDownload(ReleaseDownloadResult download)
+    {
+        ArgumentNullException.ThrowIfNull(download);
+        var directory = Path.GetDirectoryName(Path.GetFullPath(download.FilePath));
+        if (directory is not null && IsDownloadDirectory(directory)) TryDeleteDirectory(directory);
+    }
+
+    /// <summary>Removes download directories not touched for <paramref name="olderThan"/>. Returns the number removed.</summary>
+    public static int CleanUpStaleDownloads(TimeSpan olderThan)
+    {
+        if (!Directory.Exists(DownloadRoot)) return 0;
+        var cutoff = DateTime.UtcNow - olderThan;
+        var removed = 0;
+        foreach (var directory in Directory.EnumerateDirectories(DownloadRoot, "download-*"))
+        {
+            try
+            {
+                if (Directory.GetLastWriteTimeUtc(directory) >= cutoff) continue;
+                Directory.Delete(directory, recursive: true);
+                removed++;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+        return removed;
+    }
+
+    private static bool IsDownloadDirectory(string directory)
+    {
+        var root = Path.GetFullPath(DownloadRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var full = Path.GetFullPath(directory);
+        return full.StartsWith(root, StringComparison.OrdinalIgnoreCase) &&
+               Path.GetFileName(full).StartsWith("download-", StringComparison.Ordinal);
     }
 
     private static void TryDeleteDirectory(string path)
