@@ -21,9 +21,13 @@ internal sealed class AutomationWorker : IDisposable
     }
 
     /// <summary>True when the current action has been running for at least <paramref name="threshold"/>.</summary>
-    public bool IsStalled(TimeSpan threshold) =>
-        Volatile.Read(ref _busy) != 0 &&
-        Environment.TickCount64 - Volatile.Read(ref _busySince) >= (long)threshold.TotalMilliseconds;
+    public bool IsStalled(TimeSpan threshold)
+    {
+        if (Volatile.Read(ref _busy) == 0) return false;
+        var since = Volatile.Read(ref _busySince);
+        // Zero means the owner has not published its start time yet; treat it as just started.
+        return since != 0 && Environment.TickCount64 - since >= (long)threshold.TotalMilliseconds;
+    }
 
     public async Task<(bool Accepted, T? Value)> InvokeAsync<T>(Func<T> action, CancellationToken cancellationToken,
         bool waitForCompletion = false)
