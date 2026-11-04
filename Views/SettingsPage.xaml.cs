@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using popotranslation.Services;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -15,6 +17,7 @@ using Windows.ApplicationModel.DataTransfer;
 using Windows.System;
 using Windows.UI.Core;
 using PopoTranslation.Core;
+using PopoTranslation.Windows.Diagnostics;
 
 namespace popotranslation.Views;
 
@@ -51,6 +54,8 @@ public sealed record HistoryDisplayItem(DateTimeOffset CreatedAt, string SourceT
 
 public sealed partial class SettingsPage : Page
 {
+    private static readonly HashSet<string> ReportedLocalizationMisses = new(StringComparer.Ordinal);
+
     private string _profileId = Guid.NewGuid().ToString("N");
     private bool _hasSavedApiKey;
     private bool _hasSavedSecondaryCredential;
@@ -106,6 +111,16 @@ public sealed partial class SettingsPage : Page
         finally { _updatingApplicationSettings = false; }
     }
 
+    private static void ReportMissingLocalization(string chinese)
+    {
+        lock (ReportedLocalizationMisses)
+        {
+            if (!ReportedLocalizationMisses.Add(chinese)) return;
+        }
+        var digest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(chinese)))[..12];
+        DiagnosticLog.Write($"event=localization-miss digest={digest} length={chinese.Length}");
+    }
+
     public string Localize(string chinese)
     {
         if (_language != "en-US") return chinese;
@@ -118,6 +133,7 @@ public sealed partial class SettingsPage : Page
             return $"UIA marks {chinese[prefix.Length..^protectedSuffix.Length]} as protected. Ensure focus is in a chat input box, not a credential or payment field.";
         if (chinese.StartsWith(unknownPrefix, StringComparison.Ordinal) && chinese.EndsWith(unknownSuffix, StringComparison.Ordinal))
             return $"UIA cannot determine whether {chinese[unknownPrefix.Length..^unknownSuffix.Length]} is protected. Put the cursor in a chat input box and try again.";
+        ReportMissingLocalization(chinese);
         return chinese;
     }
 
@@ -546,7 +562,7 @@ public sealed partial class SettingsPage : Page
         if (selected is null && !string.IsNullOrWhiteSpace(language))
         {
             // Keep a previously saved free-form language available without changing its value.
-            selected = _savedTargetLanguageItem = new ComboBoxItem { Content = $"{language}（已保存）", Tag = language };
+            selected = _savedTargetLanguageItem = new ComboBoxItem { Content = $"{language}{Localize("（已保存）")}", Tag = language };
             TargetLanguageBox.Items.Add(selected);
         }
         TargetLanguageBox.SelectedItem = selected;
@@ -573,7 +589,7 @@ public sealed partial class SettingsPage : Page
             .FirstOrDefault(x => string.Equals(x.Tag as string, value, StringComparison.Ordinal));
         if (item is null && value.Length != 0)
         {
-            item = new ComboBoxItem { Content = $"{value}（已保存）", Tag = value };
+            item = new ComboBoxItem { Content = $"{value}{Localize("（已保存）")}", Tag = value };
             MachineSourceLanguageBox.Items.Add(item);
         }
         MachineSourceLanguageBox.SelectedItem = item;
@@ -590,7 +606,7 @@ public sealed partial class SettingsPage : Page
             .FirstOrDefault(x => string.Equals(x.Tag as string, model, StringComparison.Ordinal));
         if (item is null && !string.IsNullOrWhiteSpace(model))
         {
-            item = _savedQwenModelItem = new ComboBoxItem { Content = $"{model}（已保存）", Tag = model };
+            item = _savedQwenModelItem = new ComboBoxItem { Content = $"{model}{Localize("（已保存）")}", Tag = model };
             QwenModelBox.Items.Add(item);
         }
         QwenModelBox.SelectedItem = item ?? QwenModelBox.Items[0];
