@@ -267,7 +267,7 @@ internal sealed class ApplicationController : IDisposable
             _settings = next;
             var hasKey = false;
             try { hasKey = !string.IsNullOrWhiteSpace(await _secrets.ReadAsync(profile.CredentialReference)); }
-            catch { }
+            catch (Exception error) { DiagnosticLog.Write($"event=secret-read-failed type={error.GetType().Name} hresult={error.HResult:X8}"); }
             var hasSecondary = await HasSecondaryAsync(profile);
             await LoadProfileIntoPageAsync(next, profile, hasKey, hasSecondary, advanced);
             var message = hasKey && (!RequiresSecondary(profile.Protocol) || hasSecondary)
@@ -325,14 +325,14 @@ internal sealed class ApplicationController : IDisposable
             await _settingsStore.SaveAsync(next);
             if (_disposed) return new(false, "应用正在退出。");
             _settings = next;
-            try { await _secrets.DeleteAsync(profile.CredentialReference); } catch { }
+            try { await _secrets.DeleteAsync(profile.CredentialReference); } catch (Exception error) { DiagnosticLog.Write($"event=secret-delete-failed type={error.GetType().Name} hresult={error.HResult:X8}"); }
             if (profile.SecondaryCredentialReference is not null)
-                try { await _secrets.DeleteAsync(profile.SecondaryCredentialReference); } catch { }
+                try { await _secrets.DeleteAsync(profile.SecondaryCredentialReference); } catch (Exception error) { DiagnosticLog.Write($"event=secret-delete-failed type={error.GetType().Name} hresult={error.HResult:X8}"); }
             if (profile.AdvancedConfigurationReference is not null)
-                try { await _secrets.DeleteAsync(profile.AdvancedConfigurationReference); } catch { }
+                try { await _secrets.DeleteAsync(profile.AdvancedConfigurationReference); } catch (Exception error) { DiagnosticLog.Write($"event=secret-delete-failed type={error.GetType().Name} hresult={error.HResult:X8}"); }
             var hasKey = false;
             try { hasKey = !string.IsNullOrWhiteSpace(await _secrets.ReadAsync(nextActive.CredentialReference)); }
-            catch { }
+            catch (Exception error) { DiagnosticLog.Write($"event=secret-read-failed type={error.GetType().Name} hresult={error.HResult:X8}"); }
             await LoadProfileIntoPageAsync(next, nextActive, hasKey, await HasSecondaryAsync(nextActive), advanced);
             return new(true, "已删除服务配置。");
         }
@@ -416,11 +416,11 @@ internal sealed class ApplicationController : IDisposable
             if (previous is not null)
             {
                 if (previous.CredentialReference != profile.CredentialReference)
-                    try { await _secrets.DeleteAsync(previous.CredentialReference); } catch { }
+                    try { await _secrets.DeleteAsync(previous.CredentialReference); } catch (Exception deleteError) { DiagnosticLog.Write($"event=secret-delete-failed type={deleteError.GetType().Name} hresult={deleteError.HResult:X8}"); }
                 if (previous.SecondaryCredentialReference is not null && previous.SecondaryCredentialReference != profile.SecondaryCredentialReference)
-                    try { await _secrets.DeleteAsync(previous.SecondaryCredentialReference); } catch { }
+                    try { await _secrets.DeleteAsync(previous.SecondaryCredentialReference); } catch (Exception deleteError) { DiagnosticLog.Write($"event=secret-delete-failed type={deleteError.GetType().Name} hresult={deleteError.HResult:X8}"); }
                 if (previous.AdvancedConfigurationReference is not null && previous.AdvancedConfigurationReference != profile.AdvancedConfigurationReference)
-                    try { await _secrets.DeleteAsync(previous.AdvancedConfigurationReference); } catch { }
+                    try { await _secrets.DeleteAsync(previous.AdvancedConfigurationReference); } catch (Exception deleteError) { DiagnosticLog.Write($"event=secret-delete-failed type={deleteError.GetType().Name} hresult={deleteError.HResult:X8}"); }
             }
             newReference = null;
             newSecondaryReference = null;
@@ -434,15 +434,15 @@ internal sealed class ApplicationController : IDisposable
         {
             if (newReference is not null)
             {
-                try { await _secrets.DeleteAsync(newReference); } catch { }
+                try { await _secrets.DeleteAsync(newReference); } catch (Exception deleteError) { DiagnosticLog.Write($"event=secret-delete-failed type={deleteError.GetType().Name} hresult={deleteError.HResult:X8}"); }
             }
             if (newSecondaryReference is not null)
             {
-                try { await _secrets.DeleteAsync(newSecondaryReference); } catch { }
+                try { await _secrets.DeleteAsync(newSecondaryReference); } catch (Exception deleteError) { DiagnosticLog.Write($"event=secret-delete-failed type={deleteError.GetType().Name} hresult={deleteError.HResult:X8}"); }
             }
             if (newAdvancedReference is not null)
             {
-                try { await _secrets.DeleteAsync(newAdvancedReference); } catch { }
+                try { await _secrets.DeleteAsync(newAdvancedReference); } catch (Exception deleteError) { DiagnosticLog.Write($"event=secret-delete-failed type={deleteError.GetType().Name} hresult={deleteError.HResult:X8}"); }
             }
             _saving = false;
         }
