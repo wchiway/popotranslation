@@ -164,9 +164,39 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  smoke:
+    needs: build
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: release-files
+          path: release-files
+
+      - name: Install, launch, and uninstall silently
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = Get-ChildItem -LiteralPath release-files -Filter 'PopoTranslation.*.Setup.x64.exe' | Select-Object -First 1
+          if (-not $setup) { throw 'Installer artifact is missing.' }
+          $log = Join-Path $env:RUNNER_TEMP 'install.log'
+          $install = Start-Process -FilePath $setup.FullName -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/CURRENTUSER', '/NORESTART', "/LOG=$log") -Wait -PassThru
+          if ($install.ExitCode -ne 0) { Get-Content $log; throw "Installer exited with $($install.ExitCode)." }
+          $app = Join-Path $env:LOCALAPPDATA 'Programs\PopoTranslation\popotranslation.exe'
+          if (-not (Test-Path -LiteralPath $app)) { Get-Content $log; throw 'popotranslation.exe was not installed.' }
+          $process = Start-Process -FilePath $app -PassThru
+          Start-Sleep -Seconds 8
+          if ($process.HasExited) { throw "Application exited early with code $($process.ExitCode)." }
+          Stop-Process -Id $process.Id -Force
+          $uninstaller = Join-Path $env:LOCALAPPDATA 'Programs\PopoTranslation\unins000.exe'
+          $uninstall = Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "Uninstaller exited with $($uninstall.ExitCode)." }
+          if (Test-Path -LiteralPath $app) { throw 'Application files remain after uninstall.' }
   release:
     if: ${{ github.event_name == 'push' && github.event.created && !github.event.deleted }}
-    needs: build
+    needs: [build, smoke]
     runs-on: windows-2025
     permissions:
       contents: write
