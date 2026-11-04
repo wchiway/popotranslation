@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
+using PopoTranslation.Windows.Diagnostics;
 
 namespace popotranslation
 {
@@ -24,6 +26,18 @@ namespace popotranslation
         public App()
         {
             InitializeComponent();
+
+            // Exceptions escaping synchronous XAML handlers or non-UI threads terminate the process; record them first.
+            // Async void continuations on the UI thread fail fast inside WinUI before these handlers run.
+            UnhandledException += (_, e) =>
+                DiagnosticLog.WriteCrash($"event=unhandled-exception source=xaml type={e.Exception?.GetType().Name ?? "unknown"} hresult={(e.Exception?.HResult ?? 0):X8}");
+            AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+                DiagnosticLog.WriteCrash($"event=unhandled-exception source=appdomain type={e.ExceptionObject?.GetType().Name ?? "unknown"} terminating={e.IsTerminating}");
+            TaskScheduler.UnobservedTaskException += (_, e) =>
+            {
+                DiagnosticLog.WriteCrash($"event=unobserved-task-exception type={e.Exception.InnerException?.GetType().Name ?? e.Exception.GetType().Name}");
+                e.SetObserved();
+            };
 
             _instanceMutex = new Mutex(initiallyOwned: true, InstanceMutexName, out var createdNew);
             _isPrimary = createdNew;

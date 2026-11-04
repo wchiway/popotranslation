@@ -1,7 +1,10 @@
 using System;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using popotranslation.Services;
+using PopoTranslation.Windows.Diagnostics;
 
 namespace popotranslation;
 
@@ -26,7 +29,9 @@ public sealed partial class MainWindow : Window
         AppWindow.Closing += OnClosing;
         Settings.ExitForUpdate = ExitApplication;
         _controller = new ApplicationController(Settings, DispatcherQueue, ShowSettings, ExitApplication, iconPath);
-        _ = _controller.InitializeAsync();
+        _ = _controller.InitializeAsync().ContinueWith(
+            task => DiagnosticLog.Write($"event=initialize-failed type={task.Exception?.InnerException?.GetType().Name ?? "unknown"}"),
+            CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
     }
 
     private void ResizeForContent()
