@@ -9,11 +9,24 @@ namespace PopoTranslation.Infrastructure.Storage;
 public sealed class SqliteTranslationStore : ITranslationStore
 {
     private readonly string _path;
+    private readonly string _connectionString;
+    private readonly int _maxHistoryEntries;
+    private readonly int _maxCacheEntries;
+    private readonly SemaphoreSlim _initializationGate = new(1, 1);
+    private volatile bool _initialized;
 
-    public SqliteTranslationStore(string databasePath)
+    /// <param name="maxHistoryEntries">Oldest history rows beyond this count are deleted after each save.</param>
+    /// <param name="maxCacheEntries">Oldest cache rows (by insertion) beyond this count are deleted after each save.</param>
+    public SqliteTranslationStore(string databasePath, int maxHistoryEntries = 1000, int maxCacheEntries = 5000)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxHistoryEntries);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxCacheEntries);
         _path = Path.GetFullPath(databasePath);
+        // Pooling stays off so callers can delete the database directory as soon as the last call returns.
+        _connectionString = new SqliteConnectionStringBuilder { DataSource = _path, Pooling = false }.ToString();
+        _maxHistoryEntries = maxHistoryEntries;
+        _maxCacheEntries = maxCacheEntries;
     }
 
     public async Task<string?> FindCachedAsync(TranslationCacheContext context, CancellationToken cancellationToken = default)
@@ -38,21 +51,26 @@ public sealed class SqliteTranslationStore : ITranslationStore
         command.Transaction = transaction;
         if (saveToHistory)
         {
-        command.CommandText = """
-            INSERT INTO translation_history(created_at, source_text, translated_text, provider_id, protocol,
-                target_language, source_language, style, cache_hit)
-            VALUES ($created, $source, $translation, $provider, $protocol, $target, $language, $style, $hit)
-            """;
-        command.Parameters.AddWithValue("$created", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-        command.Parameters.AddWithValue("$source", context.Request.SourceText);
-        command.Parameters.AddWithValue("$translation", translatedText);
-        command.Parameters.AddWithValue("$provider", context.ProviderId);
-        command.Parameters.AddWithValue("$protocol", (int)context.Protocol);
-        command.Parameters.AddWithValue("$target", context.Request.TargetLanguage);
-        command.Parameters.AddWithValue("$language", (object?)context.Request.SourceLanguage ?? DBNull.Value);
-        command.Parameters.AddWithValue("$style", (object?)context.Request.Style ?? DBNull.Value);
-        command.Parameters.AddWithValue("$hit", cacheHit ? 1 : 0);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+            command.CommandText = """
+                INSERT INTO translation_history(created_at, source_text, translated_text, provider_id, protocol,
+                    target_language, source_language, style, cache_hit)
+                VALUES ($created, $source, $translation, $provider, $protocol, $target, $language, $style, $hit)
+                """;
+            command.Parameters.AddWithValue("$created", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            command.Parameters.AddWithValue("$source", context.Request.SourceText);
+            command.Parameters.AddWithValue("$translation", translatedText);
+            command.Parameters.AddWithValue("$provider", context.ProviderId);
+            command.Parameters.AddWithValue("$protocol", (int)context.Protocol);
+            command.Parameters.AddWithValue("$target", context.Request.TargetLanguage);
+            command.Parameters.AddWithValue("$language", (object?)context.Request.SourceLanguage ?? DBNull.Value);
+            command.Parameters.AddWithValue("$style", (object?)context.Request.Style ?? DBNull.Value);
+            command.Parameters.AddWithValue("$hit", cacheHit ? 1 : 0);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+
+            command.Parameters.Clear();
+            command.CommandText = "DELETE FROM translation_history WHERE id NOT IN (SELECT id FROM translation_history ORDER BY id DESC LIMIT $keep)";
+            command.Parameters.AddWithValue("$keep", _maxHistoryEntries);
+            await command.ExecuteNonQueryAsync(cancellationToken);
         }
         if (saveToCache)
         {
@@ -63,6 +81,11 @@ public sealed class SqliteTranslationStore : ITranslationStore
                 """;
             command.Parameters.AddWithValue("$key", key);
             command.Parameters.AddWithValue("$translation", translatedText);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+
+            command.Parameters.Clear();
+            command.CommandText = "DELETE FROM translation_cache WHERE rowid NOT IN (SELECT rowid FROM translation_cache ORDER BY rowid DESC LIMIT $keep)";
+            command.Parameters.AddWithValue("$keep", _maxCacheEntries);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         cancellationToken.ThrowIfCancellationRequested();
@@ -98,41 +121,32 @@ public sealed class SqliteTranslationStore : ITranslationStore
         await using var command = connection.CreateCommand();
         command.CommandText = sql;
         await command.ExecuteNonQueryAsync(cancellationToken);
+        // Explicit clears are rare; reclaim file space so the plaintext does not linger in free pages.
+        command.CommandText = "VACUUM";
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-        var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = _path, Pooling = false }.ToString());
+        var connection = new SqliteConnection(_connectionString);
         try
         {
             await connection.OpenAsync(cancellationToken);
-            using var transaction = connection.BeginTransaction();
-            await using var command = connection.CreateCommand();
-            command.Transaction = transaction;
-            command.CommandText = "PRAGMA user_version";
-            var version = Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
-            if (version == 0)
+            if (!_initialized)
             {
-                command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'";
-                if (Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)) != 0)
-                    throw new InvalidDataException("The database has an unknown schema and was not changed.");
-                command.CommandText = """
-                CREATE TABLE translation_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at INTEGER NOT NULL, source_text TEXT NOT NULL, translated_text TEXT NOT NULL,
-                    provider_id TEXT NOT NULL, protocol INTEGER NOT NULL, target_language TEXT NOT NULL,
-                    source_language TEXT, style TEXT, cache_hit INTEGER NOT NULL
-                );
-                CREATE TABLE translation_cache (cache_key BLOB PRIMARY KEY, translated_text TEXT NOT NULL);
-                PRAGMA user_version = 1;
-                """;
-                await command.ExecuteNonQueryAsync(cancellationToken);
+                await _initializationGate.WaitAsync(cancellationToken);
+                try
+                {
+                    if (!_initialized)
+                    {
+                        await EnsureSchemaAsync(connection, cancellationToken);
+                        _initialized = true;
+                    }
+                }
+                finally { _initializationGate.Release(); }
             }
-            else if (version != 1)
-                throw new InvalidDataException("The database schema version is unsupported and was not changed.");
-            transaction.Commit();
             return connection;
         }
         catch
@@ -140,6 +154,35 @@ public sealed class SqliteTranslationStore : ITranslationStore
             await connection.DisposeAsync();
             throw;
         }
+    }
+
+    private static async Task EnsureSchemaAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        using var transaction = connection.BeginTransaction();
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "PRAGMA user_version";
+        var version = Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
+        if (version == 0)
+        {
+            command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'";
+            if (Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)) != 0)
+                throw new InvalidDataException("The database has an unknown schema and was not changed.");
+            command.CommandText = """
+            CREATE TABLE translation_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at INTEGER NOT NULL, source_text TEXT NOT NULL, translated_text TEXT NOT NULL,
+                provider_id TEXT NOT NULL, protocol INTEGER NOT NULL, target_language TEXT NOT NULL,
+                source_language TEXT, style TEXT, cache_hit INTEGER NOT NULL
+            );
+            CREATE TABLE translation_cache (cache_key BLOB PRIMARY KEY, translated_text TEXT NOT NULL);
+            PRAGMA user_version = 1;
+            """;
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        else if (version != 1)
+            throw new InvalidDataException("The database schema version is unsupported and was not changed.");
+        transaction.Commit();
     }
 
     private static byte[] CacheKey(TranslationCacheContext context)

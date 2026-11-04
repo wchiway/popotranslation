@@ -95,4 +95,34 @@ public sealed class SqliteTranslationStoreTests
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }
+
+    [Fact]
+    public async Task HistoryAndCacheAreCappedAtConfiguredLimits()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new SqliteTranslationStore(Path.Combine(directory, "capped.db"), maxHistoryEntries: 2, maxCacheEntries: 2);
+            var first = Context();
+            var second = first with { Request = first.Request with { SourceText = "second" } };
+            var third = first with { Request = first.Request with { SourceText = "third" } };
+            await store.SaveSuccessAsync(first, "1", false, true, true);
+            await store.SaveSuccessAsync(second, "2", false, true, true);
+            await store.SaveSuccessAsync(third, "3", false, true, true);
+            var history = await store.GetHistoryAsync(10);
+            Assert.Equal(["third", "second"], history.Select(entry => entry.SourceText));
+            Assert.Null(await store.FindCachedAsync(first));
+            Assert.Equal("2", await store.FindCachedAsync(second));
+            Assert.Equal("3", await store.FindCachedAsync(third));
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+    }
+
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(1, 0)]
+    public void RejectsNonPositiveLimits(int history, int cache)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new SqliteTranslationStore(Path.Combine(Path.GetTempPath(), "x.db"), history, cache));
+    }
 }
