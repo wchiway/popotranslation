@@ -70,7 +70,9 @@ public sealed class MachineTranslationProviderTests
     [InlineData(true, "first\n\nsecond\n", TranslationStatus.Completed)]
     [InlineData(false, "first\n\nsecond\nextra\n", TranslationStatus.Failed)]
     [InlineData(true, "first\n\nsecond\nextra\n", TranslationStatus.Failed)]
-    public async Task LineBreakCountMustMatch(bool deepL, string translated, TranslationStatus expected)
+    [InlineData(false, "\nfirst\nsecond\n", TranslationStatus.Failed)]
+    [InlineData(true, "first\nsecond\n\n", TranslationStatus.Failed)]
+    public async Task LineStructureMustMatch(bool deepL, string translated, TranslationStatus expected)
     {
         var response = deepL
             ? JsonSerializer.Serialize(new { translations = new[] { new { text = translated } } })

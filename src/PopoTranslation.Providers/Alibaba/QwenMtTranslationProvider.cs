@@ -71,18 +71,7 @@ public sealed class QwenMtTranslationProvider : MachineTranslationProviderBase
             !result.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.String)
             return Failed("invalid_response", "The provider returned an invalid response.");
         var translated = content.GetString();
-        if (!string.IsNullOrWhiteSpace(translated) && !SameLineStructure(request.SourceText, translated))
-            return Failed("line_break_mismatch", "The translation did not preserve the line structure.");
         return TextResult(translated);
-    }
-
-    private static bool SameLineStructure(string source, string translated)
-    {
-        static string[] Lines(string text) => text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
-        var originalLines = Lines(source);
-        var translatedLines = Lines(translated);
-        return originalLines.Length == translatedLines.Length &&
-            originalLines.Zip(translatedLines).All(pair => string.IsNullOrWhiteSpace(pair.First) == string.IsNullOrWhiteSpace(pair.Second));
     }
 
     private static string? Language(string value, bool source)

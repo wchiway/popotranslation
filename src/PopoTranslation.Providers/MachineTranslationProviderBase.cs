@@ -37,8 +37,8 @@ public abstract class MachineTranslationProviderBase : ITranslationProvider
             var result = await TranslateCoreAsync(request, timeout.Token).ConfigureAwait(false);
             timeout.Token.ThrowIfCancellationRequested();
             if (result.Status == TranslationStatus.Completed && result.Text is not null &&
-                CountLineBreaks(request.SourceText) != CountLineBreaks(result.Text))
-                return Failed("line_break_mismatch", "The translation did not preserve the number of line breaks.");
+                !TranslationLineBreaks.SameLineStructure(request.SourceText, result.Text))
+                return Failed("line_break_mismatch", "The translation did not preserve the line structure.");
             return result;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -47,21 +47,6 @@ public abstract class MachineTranslationProviderBase : ITranslationProvider
         { return new(TranslationStatus.TimedOut, null, "timeout", "Translation timed out."); }
         catch (Exception)
         { return Failed("provider_error", "The translation provider request failed. Check the service configuration."); }
-    }
-
-    private static int CountLineBreaks(string text)
-    {
-        var count = 0;
-        for (var i = 0; i < text.Length; i++)
-        {
-            if (text[i] == '\r')
-            {
-                count++;
-                if (i + 1 < text.Length && text[i + 1] == '\n') i++;
-            }
-            else if (text[i] == '\n') count++;
-        }
-        return count;
     }
 
     protected abstract Task<TranslationResult> TranslateCoreAsync(TranslationRequest request, CancellationToken cancellationToken);

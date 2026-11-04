@@ -13,4 +13,15 @@ public sealed class TranslationLineBreaksTests
     {
         Assert.Equal(expected, TranslationLineBreaks.ToWindows(input));
     }
+
+    [Theory]
+    [InlineData("第一行\n\n第二行\n", "line one\r\n\r\nline two\r\n", true)]
+    [InlineData("单行", "one line", true)]
+    [InlineData("第一行\n\n第二行\n", "line one\nline two\n\n", false)]
+    [InlineData("第一行\n第二行", "line one\nline two\n", false)]
+    [InlineData("a\n \nb", "x\n\ny", true)]
+    public void SameLineStructureComparesLineCountAndBlankLines(string source, string translated, bool expected)
+    {
+        Assert.Equal(expected, TranslationLineBreaks.SameLineStructure(source, translated));
+    }
 }

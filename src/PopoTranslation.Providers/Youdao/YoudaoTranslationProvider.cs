@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using PopoTranslation.Core;
 
 namespace PopoTranslation.Providers.Youdao;
@@ -33,7 +32,7 @@ public sealed class YoudaoTranslationProvider(ProviderProfile profile, string cr
             translations[0].ValueKind != JsonValueKind.String)
             return Failure("incomplete", "The provider returned an incomplete translation.");
         var text = translations[0].GetString();
-        if (text is not null && Regex.Matches(source, "\\r\\n|\\r|\\n").Count != Regex.Matches(text, "\\r\\n|\\r|\\n").Count)
+        if (text is not null && !TranslationLineBreaks.SameLineStructure(source, text))
             return Failure("incomplete", "The provider returned an incomplete translation.");
         return Text(text);
     }

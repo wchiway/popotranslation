@@ -35,7 +35,7 @@ public sealed class BaiduTranslationProvider(ProviderProfile profile, string cre
         }
         if (segments.Count == 1 && segments[0].Source == source)
         {
-            if (!SameLineBreaks(source, segments[0].Destination)) return Failure("incomplete", "The provider returned an incomplete translation.");
+            if (!TranslationLineBreaks.SameLineStructure(source, segments[0].Destination)) return Failure("incomplete", "The provider returned an incomplete translation.");
             return Text(segments[0].Destination);
         }
 
@@ -53,6 +53,4 @@ public sealed class BaiduTranslationProvider(ProviderProfile profile, string cre
         return index == segments.Count ? Text(output.ToString()) : Failure("incomplete", "The provider returned an incomplete translation.");
     }
 
-    private static bool SameLineBreaks(string source, string destination) =>
-        Regex.Matches(source, "\\r\\n|\\r|\\n").Count == Regex.Matches(destination, "\\r\\n|\\r|\\n").Count;
 }
